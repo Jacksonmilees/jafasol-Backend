@@ -41,7 +41,24 @@ app.use(compression());
 
 // CORS configuration
 app.use(cors({
-  origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    const allowedOrigins = [
+      'http://localhost:3000',
+      'http://localhost:5173',
+      'https://jafasol-admin.herokuapp.com',
+      'https://jafasol-frontend.herokuapp.com'
+    ];
+    
+    // Allow if origin is in allowed list or if CORS_ORIGIN env var is set
+    if (allowedOrigins.indexOf(origin) !== -1 || process.env.CORS_ORIGIN) {
+      return callback(null, true);
+    }
+    
+    return callback(new Error('Not allowed by CORS'));
+  },
   credentials: true
 }));
 
