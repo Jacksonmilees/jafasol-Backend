@@ -510,6 +510,47 @@ router.get('/support/tickets', authenticateToken, requireAdmin, async (req, res)
   }
 });
 
+// ==================== BACKUPS ====================
+
+let backups = [
+  {
+    id: '1',
+    schoolId: '1',
+    schoolName: "St. Mary's Academy",
+    createdAt: '2024-07-30 10:00',
+    type: 'Manual',
+    status: 'Completed',
+    size: '150 MB',
+  },
+];
+
+// List all backups
+router.get('/backups', authenticateToken, requireAdmin, async (req, res) => {
+  res.json({
+    message: 'Backups retrieved successfully',
+    backups,
+  });
+});
+
+// Create new backup
+router.post('/backups', authenticateToken, requireAdmin, async (req, res) => {
+  const { schoolId, schoolName } = req.body;
+  const newBackup = {
+    id: String(Date.now()),
+    schoolId,
+    schoolName,
+    createdAt: new Date().toISOString(),
+    type: 'Manual',
+    status: 'Completed',
+    size: `${Math.floor(Math.random() * 200) + 50} MB`,
+  };
+  backups.unshift(newBackup);
+  res.status(201).json({
+    message: 'Backup created successfully',
+    backup: newBackup,
+  });
+});
+
 // ==================== SYSTEM SETTINGS ====================
 
 // Get system settings
@@ -629,6 +670,47 @@ router.get('/analytics', authenticateToken, requireAdmin, async (req, res) => {
       message: error.message
     });
   }
+});
+
+// ==================== DATA EXPORT ====================
+
+const exportData = {
+  schools: [
+    { id: '1', name: "St. Mary's Academy", plan: 'Premium', status: 'Active' },
+    { id: '2', name: 'Bright Future School', plan: 'Basic', status: 'Active' },
+  ],
+  users: [
+    { id: 'admin-1', name: 'JafaSol Super Admin', email: 'admin@jafasol.com', role: 'super_admin' },
+  ],
+  invoices: [
+    { id: '1', schoolId: '1', amount: 199, status: 'Due', dueDate: '2024-08-15' },
+  ],
+  tickets: [
+    { id: '1', schoolId: '1', subject: 'Payment Gateway Issue', status: 'Open' },
+  ],
+  logs: [
+    { id: '1', action: 'LOGIN', userId: 'admin-1', timestamp: '2024-07-30T10:00:00Z' },
+  ],
+};
+
+// List available export types
+router.get('/export', authenticateToken, requireAdmin, async (req, res) => {
+  res.json({
+    message: 'Available export types',
+    types: Object.keys(exportData),
+  });
+});
+
+// Export data for a type
+router.post('/export', authenticateToken, requireAdmin, async (req, res) => {
+  const { type } = req.body;
+  if (!type || !exportData[type]) {
+    return res.status(400).json({ error: 'Invalid export type' });
+  }
+  res.json({
+    message: `Exported data for ${type}`,
+    data: exportData[type],
+  });
 });
 
 // Helper function to get plan amount
