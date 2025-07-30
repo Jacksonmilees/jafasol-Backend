@@ -791,24 +791,25 @@ app.post('/api/admin/export', (req, res) => {
   });
 });
 
-// ==================== SUBDOMAIN MANAGEMENT ====================
+// ==================== ENHANCED SUBDOMAIN MANAGEMENT ====================
 
 let subdomains = [
   {
     id: '1',
     schoolId: '1',
-    schoolName: "St. Mary's Academy",
+    schoolName: 'St. Mary\'s Academy',
     subdomain: 'stmarys',
     fullDomain: 'stmarys.jafasol.com',
-    status: 'active',
+    url: 'https://stmarys.jafasol.com',
     sslStatus: 'active',
     serverStatus: 'online',
-    createdAt: '2024-01-15',
-    lastChecked: new Date().toISOString(),
     dnsRecords: [
       { type: 'A', name: 'stmarys.jafasol.com', value: '192.168.1.100' },
       { type: 'CNAME', name: 'www.stmarys.jafasol.com', value: 'stmarys.jafasol.com' }
-    ]
+    ],
+    createdAt: '2024-07-30T10:00:00Z',
+    lastChecked: '2024-07-30T10:00:00Z',
+    isActive: true
   },
   {
     id: '2',
@@ -816,17 +817,311 @@ let subdomains = [
     schoolName: 'Bright Future School',
     subdomain: 'brightfuture',
     fullDomain: 'brightfuture.jafasol.com',
-    status: 'active',
+    url: 'https://brightfuture.jafasol.com',
     sslStatus: 'active',
     serverStatus: 'online',
-    createdAt: '2024-02-01',
-    lastChecked: new Date().toISOString(),
     dnsRecords: [
       { type: 'A', name: 'brightfuture.jafasol.com', value: '192.168.1.101' },
       { type: 'CNAME', name: 'www.brightfuture.jafasol.com', value: 'brightfuture.jafasol.com' }
-    ]
+    ],
+    createdAt: '2024-07-30T09:00:00Z',
+    lastChecked: '2024-07-30T09:00:00Z',
+    isActive: true
   }
 ];
+
+// Auto-generate subdomain from school name
+function generateSubdomain(schoolName) {
+  return schoolName
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '') // Remove special characters
+    .replace(/\s+/g, '') // Remove spaces
+    .substring(0, 20); // Limit length
+}
+
+// Check if subdomain is available
+function isSubdomainAvailable(subdomain) {
+  return !subdomains.some(s => s.subdomain === subdomain);
+}
+
+// Generate unique subdomain
+function generateUniqueSubdomain(schoolName) {
+  let baseSubdomain = generateSubdomain(schoolName);
+  let subdomain = baseSubdomain;
+  let counter = 1;
+  
+  while (!isSubdomainAvailable(subdomain)) {
+    subdomain = `${baseSubdomain}${counter}`;
+    counter++;
+  }
+  
+  return subdomain;
+}
+
+// Create subdomain automatically when school is created
+app.post('/api/admin/schools', (req, res) => {
+  const { name, email, phone, plan, status, modules } = req.body;
+  
+  // Check if school already exists
+  const existingSchool = schools.find(s => s.email === email);
+  if (existingSchool) {
+    return res.status(409).json({
+      error: 'School already exists',
+      message: `School with email '${email}' already exists`
+    });
+  }
+  
+  const newSchool = {
+    id: `school_${Date.now()}`,
+    name,
+    email,
+    phone,
+    logoUrl: `https://picsum.photos/seed/${Date.now()}/200/200`,
+    plan: plan || 'Basic',
+    status: status || 'Active',
+    subdomain: '', // Will be generated
+    storageUsage: Math.floor(Math.random() * 50) + 10,
+    createdAt: new Date().toISOString(),
+    modules: modules || ['attendance', 'fees', 'academics']
+  };
+  
+  // Auto-generate subdomain
+  const subdomain = generateUniqueSubdomain(name);
+  newSchool.subdomain = subdomain;
+  
+  schools.push(newSchool);
+  
+  // Create subdomain automatically
+  const newSubdomain = {
+    id: `subdomain_${Date.now()}`,
+    schoolId: newSchool.id,
+    schoolName: name,
+    subdomain: subdomain,
+    fullDomain: `${subdomain}.jafasol.com`,
+    url: `https://${subdomain}.jafasol.com`,
+    sslStatus: 'pending',
+    serverStatus: 'provisioning',
+    dnsRecords: [
+      { type: 'A', name: `${subdomain}.jafasol.com`, value: '192.168.1.100' },
+      { type: 'CNAME', name: `www.${subdomain}.jafasol.com`, value: `${subdomain}.jafasol.com` }
+    ],
+    createdAt: new Date().toISOString(),
+    lastChecked: new Date().toISOString(),
+    isActive: false
+  };
+  
+  subdomains.push(newSubdomain);
+  
+  res.status(201).json({
+    message: 'School created successfully with auto-generated subdomain',
+    school: newSchool,
+    subdomain: newSubdomain
+  });
+});
+
+// Get subdomain by school ID
+app.get('/api/admin/schools/:id/subdomain', (req, res) => {
+  const { id } = req.params;
+  const subdomain = subdomains.find(s => s.schoolId === id);
+  
+  if (!subdomain) {
+    return res.status(404).json({
+      error: 'Subdomain not found',
+      message: `No subdomain found for school ID '${id}'`
+    });
+  }
+  
+  res.json({
+    message: 'Subdomain retrieved successfully',
+    subdomain
+  });
+});
+
+// Update subdomain DNS records
+app.put('/api/admin/subdomains/:id/dns', (req, res) => {
+  const { id } = req.params;
+  const { dnsRecords } = req.body;
+  
+  const subdomainIndex = subdomains.findIndex(s => s.id === id);
+  if (subdomainIndex === -1) {
+    return res.status(404).json({
+      error: 'Subdomain not found',
+      message: `Subdomain with ID '${id}' does not exist`
+    });
+  }
+  
+  subdomains[subdomainIndex].dnsRecords = dnsRecords;
+  subdomains[subdomainIndex].lastChecked = new Date().toISOString();
+  
+  res.json({
+    message: 'DNS records updated successfully',
+    subdomain: subdomains[subdomainIndex]
+  });
+});
+
+// Provision subdomain (activate it)
+app.post('/api/admin/subdomains/:id/provision', (req, res) => {
+  const { id } = req.params;
+  
+  const subdomainIndex = subdomains.findIndex(s => s.id === id);
+  if (subdomainIndex === -1) {
+    return res.status(404).json({
+      error: 'Subdomain not found',
+      message: `Subdomain with ID '${id}' does not exist`
+    });
+  }
+  
+  // Simulate provisioning process
+  subdomains[subdomainIndex].sslStatus = 'active';
+  subdomains[subdomainIndex].serverStatus = 'online';
+  subdomains[subdomainIndex].isActive = true;
+  subdomains[subdomainIndex].lastChecked = new Date().toISOString();
+  
+  res.json({
+    message: 'Subdomain provisioned successfully',
+    subdomain: subdomains[subdomainIndex]
+  });
+});
+
+// Get subdomain analytics
+app.get('/api/admin/subdomains/:id/analytics', (req, res) => {
+  const { id } = req.params;
+  const subdomain = subdomains.find(s => s.id === id);
+  
+  if (!subdomain) {
+    return res.status(404).json({
+      error: 'Subdomain not found',
+      message: `Subdomain with ID '${id}' does not exist`
+    });
+  }
+  
+  // Mock analytics data
+  const analytics = {
+    subdomainId: id,
+    schoolName: subdomain.schoolName,
+    fullDomain: subdomain.fullDomain,
+    uptime: 99.8,
+    responseTime: 120,
+    monthlyVisits: Math.floor(Math.random() * 10000) + 1000,
+    activeUsers: Math.floor(Math.random() * 500) + 50,
+    sslStatus: subdomain.sslStatus,
+    serverStatus: subdomain.serverStatus,
+    lastUpdated: new Date().toISOString()
+  };
+  
+  res.json({
+    message: 'Subdomain analytics retrieved successfully',
+    analytics
+  });
+});
+
+// Bulk provision subdomains
+app.post('/api/admin/subdomains/bulk-provision', (req, res) => {
+  const { subdomainIds } = req.body;
+  
+  const results = [];
+  
+  subdomainIds.forEach(id => {
+    const subdomainIndex = subdomains.findIndex(s => s.id === id);
+    if (subdomainIndex !== -1) {
+      subdomains[subdomainIndex].sslStatus = 'active';
+      subdomains[subdomainIndex].serverStatus = 'online';
+      subdomains[subdomainIndex].isActive = true;
+      subdomains[subdomainIndex].lastChecked = new Date().toISOString();
+      
+      results.push({
+        id,
+        status: 'provisioned',
+        subdomain: subdomains[subdomainIndex]
+      });
+    } else {
+      results.push({
+        id,
+        status: 'not_found',
+        error: 'Subdomain not found'
+      });
+    }
+  });
+  
+  res.json({
+    message: 'Bulk provisioning completed',
+    results
+  });
+});
+
+// Get subdomain templates
+app.get('/api/admin/subdomains/templates', (req, res) => {
+  const templates = [
+    {
+      id: 'basic',
+      name: 'Basic Template',
+      description: 'Standard school management features',
+      features: ['attendance', 'fees', 'academics'],
+      price: 0
+    },
+    {
+      id: 'premium',
+      name: 'Premium Template',
+      description: 'Advanced features with analytics',
+      features: ['attendance', 'fees', 'academics', 'analytics', 'communication'],
+      price: 50
+    },
+    {
+      id: 'enterprise',
+      name: 'Enterprise Template',
+      description: 'Full-featured school management',
+      features: ['attendance', 'fees', 'academics', 'analytics', 'communication', 'transport', 'library'],
+      price: 100
+    }
+  ];
+  
+  res.json({
+    message: 'Subdomain templates retrieved successfully',
+    templates
+  });
+});
+
+// Apply template to subdomain
+app.post('/api/admin/subdomains/:id/apply-template', (req, res) => {
+  const { id } = req.params;
+  const { templateId } = req.body;
+  
+  const subdomainIndex = subdomains.findIndex(s => s.id === id);
+  if (subdomainIndex === -1) {
+    return res.status(404).json({
+      error: 'Subdomain not found',
+      message: `Subdomain with ID '${id}' does not exist`
+    });
+  }
+  
+  // Apply template features
+  const templates = {
+    basic: ['attendance', 'fees', 'academics'],
+    premium: ['attendance', 'fees', 'academics', 'analytics', 'communication'],
+    enterprise: ['attendance', 'fees', 'academics', 'analytics', 'communication', 'transport', 'library']
+  };
+  
+  const template = templates[templateId];
+  if (!template) {
+    return res.status(400).json({
+      error: 'Invalid template',
+      message: `Template '${templateId}' does not exist`
+    });
+  }
+  
+  // Update school modules
+  const schoolIndex = schools.findIndex(s => s.id === subdomains[subdomainIndex].schoolId);
+  if (schoolIndex !== -1) {
+    schools[schoolIndex].modules = template;
+  }
+  
+  res.json({
+    message: 'Template applied successfully',
+    subdomain: subdomains[subdomainIndex],
+    appliedTemplate: templateId,
+    features: template
+  });
+});
 
 // List all subdomains
 app.get('/api/admin/subdomains', (req, res) => {
@@ -854,7 +1149,7 @@ app.get('/api/admin/subdomains/:id', (req, res) => {
   });
 });
 
-// Create new subdomain
+// Create new subdomain manually
 app.post('/api/admin/subdomains', (req, res) => {
   const { schoolId, schoolName, subdomain } = req.body;
   
@@ -868,20 +1163,21 @@ app.post('/api/admin/subdomains', (req, res) => {
   }
   
   const newSubdomain = {
-    id: String(Date.now()),
+    id: `subdomain_${Date.now()}`,
     schoolId,
     schoolName,
     subdomain,
     fullDomain: `${subdomain}.jafasol.com`,
-    status: 'active',
-    sslStatus: 'active',
-    serverStatus: 'online',
-    createdAt: new Date().toISOString(),
-    lastChecked: new Date().toISOString(),
+    url: `https://${subdomain}.jafasol.com`,
+    sslStatus: 'pending',
+    serverStatus: 'provisioning',
     dnsRecords: [
       { type: 'A', name: `${subdomain}.jafasol.com`, value: '192.168.1.100' },
       { type: 'CNAME', name: `www.${subdomain}.jafasol.com`, value: `${subdomain}.jafasol.com` }
-    ]
+    ],
+    createdAt: new Date().toISOString(),
+    lastChecked: new Date().toISOString(),
+    isActive: false
   };
   
   subdomains.push(newSubdomain);
@@ -1568,89 +1864,49 @@ let featureToggles = [
   {
     id: '1',
     name: 'Advanced Analytics',
-    description: 'Enable advanced analytics dashboard for all schools',
-    enabled: true,
-    type: 'global',
+    description: 'Enable advanced analytics features',
+    status: 'enabled',
+    targetAudience: 'all',
     rolloutPercentage: 100,
-    createdAt: '2024-07-30T10:00:00Z',
-    updatedAt: '2024-07-30T10:00:00Z'
+    createdAt: '2024-07-01T00:00:00Z',
+    lastModified: '2024-07-15T00:00:00Z'
   },
   {
     id: '2',
-    name: 'AI Chat Assistant',
-    description: 'Enable AI-powered chat assistant for support',
-    enabled: false,
-    type: 'gradual',
-    rolloutPercentage: 25,
-    createdAt: '2024-07-30T09:00:00Z',
-    updatedAt: '2024-07-30T09:00:00Z'
+    name: 'AI Chat Support',
+    description: 'Enable AI-powered chat support',
+    status: 'enabled',
+    targetAudience: 'premium',
+    rolloutPercentage: 50,
+    createdAt: '2024-07-10T00:00:00Z',
+    lastModified: '2024-07-20T00:00:00Z'
   },
   {
     id: '3',
-    name: 'Dark Mode',
-    description: 'Enable dark mode theme option',
-    enabled: true,
-    type: 'global',
-    rolloutPercentage: 100,
-    createdAt: '2024-07-30T08:00:00Z',
-    updatedAt: '2024-07-30T08:00:00Z'
-  },
-  {
-    id: '4',
-    name: 'Real-time Notifications',
-    description: 'Enable real-time push notifications',
-    enabled: false,
-    type: 'gradual',
+    name: 'Mobile App',
+    description: 'Enable mobile app features',
+    status: 'disabled',
+    targetAudience: 'all',
     rolloutPercentage: 0,
-    createdAt: '2024-07-30T07:00:00Z',
-    updatedAt: '2024-07-30T07:00:00Z'
+    createdAt: '2024-07-05T00:00:00Z',
+    lastModified: '2024-07-25T00:00:00Z'
   }
 ];
 
-let abTests = [
-  {
-    id: '1',
-    name: 'New Dashboard Layout',
-    description: 'Testing new dashboard layout vs old layout',
-    status: 'active',
-    variantA: 'old_layout',
-    variantB: 'new_layout',
-    trafficSplit: 50, // 50% A, 50% B
-    startDate: '2024-07-30T00:00:00Z',
-    endDate: '2024-08-30T00:00:00Z',
-    metrics: {
-      variantA: { users: 150, engagement: 0.75 },
-      variantB: { users: 148, engagement: 0.82 }
-    }
-  }
-];
-
-// List all feature toggles
+// Get all feature toggles
 app.get('/api/admin/features', (req, res) => {
-  const { enabled, type } = req.query;
-  
-  let filteredFeatures = featureToggles;
-  
-  if (enabled !== undefined) {
-    filteredFeatures = filteredFeatures.filter(f => f.enabled === (enabled === 'true'));
-  }
-  
-  if (type) {
-    filteredFeatures = filteredFeatures.filter(f => f.type === type);
-  }
-  
   res.json({
     message: 'Feature toggles retrieved successfully',
-    features: filteredFeatures
+    featureToggles
   });
 });
 
 // Get specific feature toggle
 app.get('/api/admin/features/:id', (req, res) => {
   const { id } = req.params;
-  const feature = featureToggles.find(f => f.id === id);
+  const featureToggle = featureToggles.find(f => f.id === id);
   
-  if (!feature) {
+  if (!featureToggle) {
     return res.status(404).json({
       error: 'Feature toggle not found',
       message: `Feature toggle with ID '${id}' does not exist`
@@ -1659,30 +1915,30 @@ app.get('/api/admin/features/:id', (req, res) => {
   
   res.json({
     message: 'Feature toggle retrieved successfully',
-    feature
+    featureToggle
   });
 });
 
 // Create new feature toggle
 app.post('/api/admin/features', (req, res) => {
-  const { name, description, enabled, type, rolloutPercentage } = req.body;
+  const { name, description, targetAudience, rolloutPercentage } = req.body;
   
-  const newFeature = {
+  const newFeatureToggle = {
     id: `feature_${Date.now()}`,
     name,
     description,
-    enabled: enabled || false,
-    type: type || 'global',
+    status: 'disabled',
+    targetAudience: targetAudience || 'all',
     rolloutPercentage: rolloutPercentage || 0,
     createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
+    lastModified: new Date().toISOString()
   };
   
-  featureToggles.push(newFeature);
+  featureToggles.push(newFeatureToggle);
   
   res.status(201).json({
     message: 'Feature toggle created successfully',
-    feature: newFeature
+    featureToggle: newFeatureToggle
   });
 });
 
@@ -1691,23 +1947,45 @@ app.put('/api/admin/features/:id', (req, res) => {
   const { id } = req.params;
   const updates = req.body;
   
-  const featureIndex = featureToggles.findIndex(f => f.id === id);
-  if (featureIndex === -1) {
+  const featureToggleIndex = featureToggles.findIndex(f => f.id === id);
+  if (featureToggleIndex === -1) {
     return res.status(404).json({
       error: 'Feature toggle not found',
       message: `Feature toggle with ID '${id}' does not exist`
     });
   }
   
-  featureToggles[featureIndex] = {
-    ...featureToggles[featureIndex],
+  featureToggles[featureToggleIndex] = {
+    ...featureToggles[featureToggleIndex],
     ...updates,
-    updatedAt: new Date().toISOString()
+    lastModified: new Date().toISOString()
   };
   
   res.json({
     message: 'Feature toggle updated successfully',
-    feature: featureToggles[featureIndex]
+    featureToggle: featureToggles[featureToggleIndex]
+  });
+});
+
+// Toggle feature
+app.post('/api/admin/features/:id/toggle', (req, res) => {
+  const { id } = req.params;
+  
+  const featureToggleIndex = featureToggles.findIndex(f => f.id === id);
+  if (featureToggleIndex === -1) {
+    return res.status(404).json({
+      error: 'Feature toggle not found',
+      message: `Feature toggle with ID '${id}' does not exist`
+    });
+  }
+  
+  const currentStatus = featureToggles[featureToggleIndex].status;
+  featureToggles[featureToggleIndex].status = currentStatus === 'enabled' ? 'disabled' : 'enabled';
+  featureToggles[featureToggleIndex].lastModified = new Date().toISOString();
+  
+  res.json({
+    message: 'Feature toggle updated successfully',
+    featureToggle: featureToggles[featureToggleIndex]
   });
 });
 
@@ -1715,64 +1993,373 @@ app.put('/api/admin/features/:id', (req, res) => {
 app.delete('/api/admin/features/:id', (req, res) => {
   const { id } = req.params;
   
-  const featureIndex = featureToggles.findIndex(f => f.id === id);
-  if (featureIndex === -1) {
+  const featureToggleIndex = featureToggles.findIndex(f => f.id === id);
+  if (featureToggleIndex === -1) {
     return res.status(404).json({
       error: 'Feature toggle not found',
       message: `Feature toggle with ID '${id}' does not exist`
     });
   }
   
-  const deletedFeature = featureToggles.splice(featureIndex, 1)[0];
+  const deletedFeatureToggle = featureToggles.splice(featureToggleIndex, 1)[0];
   
   res.json({
     message: 'Feature toggle deleted successfully',
-    feature: deletedFeature
+    featureToggle: deletedFeatureToggle
   });
 });
 
-// Toggle feature on/off
-app.post('/api/admin/features/:id/toggle', (req, res) => {
+// ==================== SUPPORT TICKETS ====================
+
+let supportTickets = [
+  {
+    id: '1',
+    schoolId: '1',
+    schoolName: 'St. Mary\'s Academy',
+    subject: 'Login Issue',
+    description: 'Unable to access the portal',
+    status: 'open',
+    priority: 'high',
+    lastUpdated: '2024-07-30T10:00:00Z',
+    conversation: [
+      { id: '1', sender: 'School Admin', message: 'Cannot login to the system', timestamp: '2024-07-30T10:00:00Z' },
+      { id: '2', sender: 'Support', message: 'We are investigating the issue', timestamp: '2024-07-30T10:30:00Z' }
+    ]
+  },
+  {
+    id: '2',
+    schoolId: '2',
+    schoolName: 'Bright Future School',
+    subject: 'Payment Problem',
+    description: 'Payment not processing',
+    status: 'in_progress',
+    priority: 'medium',
+    lastUpdated: '2024-07-30T09:00:00Z',
+    conversation: [
+      { id: '1', sender: 'School Admin', message: 'Payment gateway error', timestamp: '2024-07-30T09:00:00Z' },
+      { id: '2', sender: 'Support', message: 'Checking payment gateway status', timestamp: '2024-07-30T09:15:00Z' }
+    ]
+  }
+];
+
+// Get all support tickets
+app.get('/api/admin/support/tickets', (req, res) => {
+  res.json({
+    message: 'Support tickets retrieved successfully',
+    tickets: supportTickets
+  });
+});
+
+// Get specific support ticket
+app.get('/api/admin/support/tickets/:id', (req, res) => {
   const { id } = req.params;
+  const ticket = supportTickets.find(t => t.id === id);
   
-  const featureIndex = featureToggles.findIndex(f => f.id === id);
-  if (featureIndex === -1) {
+  if (!ticket) {
     return res.status(404).json({
-      error: 'Feature toggle not found',
-      message: `Feature toggle with ID '${id}' does not exist`
+      error: 'Support ticket not found',
+      message: `Ticket with ID '${id}' does not exist`
     });
   }
   
-  featureToggles[featureIndex].enabled = !featureToggles[featureIndex].enabled;
-  featureToggles[featureIndex].updatedAt = new Date().toISOString();
-  
   res.json({
-    message: `Feature ${featureToggles[featureIndex].enabled ? 'enabled' : 'disabled'} successfully`,
-    feature: featureToggles[featureIndex]
+    message: 'Support ticket retrieved successfully',
+    ticket
   });
 });
 
-// Get A/B tests
-app.get('/api/admin/features/ab-tests', (req, res) => {
-  const { status } = req.query;
+// Create new support ticket
+app.post('/api/admin/support/tickets', (req, res) => {
+  const { schoolId, schoolName, subject, description, priority } = req.body;
   
-  let filteredTests = abTests;
+  const newTicket = {
+    id: `ticket_${Date.now()}`,
+    schoolId,
+    schoolName,
+    subject,
+    description,
+    status: 'open',
+    priority: priority || 'medium',
+    lastUpdated: new Date().toISOString(),
+    conversation: [
+      { id: '1', sender: 'School Admin', message: description, timestamp: new Date().toISOString() }
+    ]
+  };
   
-  if (status) {
-    filteredTests = filteredTests.filter(test => test.status === status);
+  supportTickets.push(newTicket);
+  
+  res.status(201).json({
+    message: 'Support ticket created successfully',
+    ticket: newTicket
+  });
+});
+
+// Update support ticket
+app.put('/api/admin/support/tickets/:id', (req, res) => {
+  const { id } = req.params;
+  const updates = req.body;
+  
+  const ticketIndex = supportTickets.findIndex(t => t.id === id);
+  if (ticketIndex === -1) {
+    return res.status(404).json({
+      error: 'Support ticket not found',
+      message: `Ticket with ID '${id}' does not exist`
+    });
+  }
+  
+  supportTickets[ticketIndex] = {
+    ...supportTickets[ticketIndex],
+    ...updates,
+    lastUpdated: new Date().toISOString()
+  };
+  
+  res.json({
+    message: 'Support ticket updated successfully',
+    ticket: supportTickets[ticketIndex]
+  });
+});
+
+// Delete support ticket
+app.delete('/api/admin/support/tickets/:id', (req, res) => {
+  const { id } = req.params;
+  
+  const ticketIndex = supportTickets.findIndex(t => t.id === id);
+  if (ticketIndex === -1) {
+    return res.status(404).json({
+      error: 'Support ticket not found',
+      message: `Ticket with ID '${id}' does not exist`
+    });
+  }
+  
+  const deletedTicket = supportTickets.splice(ticketIndex, 1)[0];
+  
+  res.json({
+    message: 'Support ticket deleted successfully',
+    ticket: deletedTicket
+  });
+});
+
+// Add message to ticket conversation
+app.post('/api/admin/support/tickets/:id/messages', (req, res) => {
+  const { id } = req.params;
+  const { sender, message } = req.body;
+  
+  const ticketIndex = supportTickets.findIndex(t => t.id === id);
+  if (ticketIndex === -1) {
+    return res.status(404).json({
+      error: 'Support ticket not found',
+      message: `Ticket with ID '${id}' does not exist`
+    });
+  }
+  
+  const newMessage = {
+    id: `msg_${Date.now()}`,
+    sender,
+    message,
+    timestamp: new Date().toISOString()
+  };
+  
+  supportTickets[ticketIndex].conversation.push(newMessage);
+  supportTickets[ticketIndex].lastUpdated = new Date().toISOString();
+  
+  res.json({
+    message: 'Message added successfully',
+    message: newMessage
+  });
+});
+
+// ==================== BILLING & SUBSCRIPTIONS ====================
+
+let subscriptions = [
+  {
+    id: '1',
+    schoolId: '1',
+    schoolName: 'St. Mary\'s Academy',
+    planName: 'Premium',
+    amount: 99.99,
+    billingCycle: 'monthly',
+    status: 'active',
+    nextBillingDate: '2024-08-30T00:00:00Z',
+    features: ['attendance', 'fees', 'academics', 'analytics', 'communication'],
+    createdAt: '2024-07-30T00:00:00Z'
+  },
+  {
+    id: '2',
+    schoolId: '2',
+    schoolName: 'Bright Future School',
+    planName: 'Basic',
+    amount: 49.99,
+    billingCycle: 'monthly',
+    status: 'active',
+    nextBillingDate: '2024-08-30T00:00:00Z',
+    features: ['attendance', 'fees', 'academics'],
+    createdAt: '2024-07-30T00:00:00Z'
+  }
+];
+
+// Get all subscriptions
+app.get('/api/admin/billing/subscriptions', (req, res) => {
+  res.json({
+    message: 'Subscriptions retrieved successfully',
+    subscriptions
+  });
+});
+
+// Get specific subscription
+app.get('/api/admin/billing/subscriptions/:id', (req, res) => {
+  const { id } = req.params;
+  const subscription = subscriptions.find(s => s.id === id);
+  
+  if (!subscription) {
+    return res.status(404).json({
+      error: 'Subscription not found',
+      message: `Subscription with ID '${id}' does not exist`
+    });
   }
   
   res.json({
-    message: 'A/B tests retrieved successfully',
-    tests: filteredTests
+    message: 'Subscription retrieved successfully',
+    subscription
   });
 });
 
-// Create A/B test
+// Create new subscription
+app.post('/api/admin/billing/subscriptions', (req, res) => {
+  const { schoolId, schoolName, planName, amount, billingCycle, features } = req.body;
+  
+  const newSubscription = {
+    id: `sub_${Date.now()}`,
+    schoolId,
+    schoolName,
+    planName,
+    amount,
+    billingCycle: billingCycle || 'monthly',
+    status: 'active',
+    nextBillingDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), // 30 days from now
+    features: features || ['attendance', 'fees', 'academics'],
+    createdAt: new Date().toISOString()
+  };
+  
+  subscriptions.push(newSubscription);
+  
+  res.status(201).json({
+    message: 'Subscription created successfully',
+    subscription: newSubscription
+  });
+});
+
+// Update subscription
+app.put('/api/admin/billing/subscriptions/:id', (req, res) => {
+  const { id } = req.params;
+  const updates = req.body;
+  
+  const subscriptionIndex = subscriptions.findIndex(s => s.id === id);
+  if (subscriptionIndex === -1) {
+    return res.status(404).json({
+      error: 'Subscription not found',
+      message: `Subscription with ID '${id}' does not exist`
+    });
+  }
+  
+  subscriptions[subscriptionIndex] = {
+    ...subscriptions[subscriptionIndex],
+    ...updates
+  };
+  
+  res.json({
+    message: 'Subscription updated successfully',
+    subscription: subscriptions[subscriptionIndex]
+  });
+});
+
+// Cancel subscription
+app.post('/api/admin/billing/subscriptions/:id/cancel', (req, res) => {
+  const { id } = req.params;
+  
+  const subscriptionIndex = subscriptions.findIndex(s => s.id === id);
+  if (subscriptionIndex === -1) {
+    return res.status(404).json({
+      error: 'Subscription not found',
+      message: `Subscription with ID '${id}' does not exist`
+    });
+  }
+  
+  subscriptions[subscriptionIndex].status = 'cancelled';
+  
+  res.json({
+    message: 'Subscription cancelled successfully',
+    subscription: subscriptions[subscriptionIndex]
+  });
+});
+
+// ==================== FEATURE TOGGLES & AB TESTS ====================
+
+let abTests = [
+  {
+    id: '1',
+    name: 'New Dashboard Layout',
+    description: 'Testing new dashboard design',
+    status: 'active',
+    variantA: 'Current Layout',
+    variantB: 'New Layout',
+    trafficSplit: 50,
+    metrics: {
+      variantA: { impressions: 1000, conversions: 150, conversionRate: 15.0 },
+      variantB: { impressions: 1000, conversions: 180, conversionRate: 18.0 }
+    },
+    startDate: '2024-07-01T00:00:00Z',
+    endDate: '2024-07-31T00:00:00Z',
+    createdAt: '2024-07-01T00:00:00Z'
+  },
+  {
+    id: '2',
+    name: 'Payment Flow Optimization',
+    description: 'Testing streamlined payment process',
+    status: 'active',
+    variantA: 'Standard Flow',
+    variantB: 'Optimized Flow',
+    trafficSplit: 30,
+    metrics: {
+      variantA: { impressions: 800, conversions: 120, conversionRate: 15.0 },
+      variantB: { impressions: 800, conversions: 140, conversionRate: 17.5 }
+    },
+    startDate: '2024-07-15T00:00:00Z',
+    endDate: '2024-08-15T00:00:00Z',
+    createdAt: '2024-07-15T00:00:00Z'
+  }
+];
+
+// Get all AB tests
+app.get('/api/admin/features/ab-tests', (req, res) => {
+  res.json({
+    message: 'AB tests retrieved successfully',
+    abTests
+  });
+});
+
+// Get specific AB test
+app.get('/api/admin/features/ab-tests/:id', (req, res) => {
+  const { id } = req.params;
+  const abTest = abTests.find(t => t.id === id);
+  
+  if (!abTest) {
+    return res.status(404).json({
+      error: 'AB test not found',
+      message: `AB test with ID '${id}' does not exist`
+    });
+  }
+  
+  res.json({
+    message: 'AB test retrieved successfully',
+    abTest
+  });
+});
+
+// Create new AB test
 app.post('/api/admin/features/ab-tests', (req, res) => {
   const { name, description, variantA, variantB, trafficSplit, startDate, endDate } = req.body;
   
-  const newTest = {
+  const newABTest = {
     id: `abtest_${Date.now()}`,
     name,
     description,
@@ -1780,254 +2367,85 @@ app.post('/api/admin/features/ab-tests', (req, res) => {
     variantA,
     variantB,
     trafficSplit: trafficSplit || 50,
-    startDate: startDate || new Date().toISOString(),
-    endDate,
     metrics: {
-      variantA: { users: 0, engagement: 0 },
-      variantB: { users: 0, engagement: 0 }
-    }
+      variantA: { impressions: 0, conversions: 0, conversionRate: 0 },
+      variantB: { impressions: 0, conversions: 0, conversionRate: 0 }
+    },
+    startDate: startDate || new Date().toISOString(),
+    endDate: endDate || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+    createdAt: new Date().toISOString()
   };
   
-  abTests.push(newTest);
+  abTests.push(newABTest);
   
   res.status(201).json({
-    message: 'A/B test created successfully',
-    test: newTest
+    message: 'AB test created successfully',
+    abTest: newABTest
   });
 });
 
-// Update A/B test metrics
-app.put('/api/admin/features/ab-tests/:id/metrics', (req, res) => {
+// Update AB test
+app.put('/api/admin/features/ab-tests/:id', (req, res) => {
   const { id } = req.params;
-  const { variantA, variantB } = req.body;
+  const updates = req.body;
   
-  const testIndex = abTests.findIndex(t => t.id === id);
-  if (testIndex === -1) {
+  const abTestIndex = abTests.findIndex(t => t.id === id);
+  if (abTestIndex === -1) {
     return res.status(404).json({
-      error: 'A/B test not found',
-      message: `A/B test with ID '${id}' does not exist`
+      error: 'AB test not found',
+      message: `AB test with ID '${id}' does not exist`
     });
   }
   
-  abTests[testIndex].metrics = {
-    variantA: variantA || abTests[testIndex].metrics.variantA,
-    variantB: variantB || abTests[testIndex].metrics.variantB
+  abTests[abTestIndex] = {
+    ...abTests[abTestIndex],
+    ...updates
   };
   
   res.json({
-    message: 'A/B test metrics updated successfully',
-    test: abTests[testIndex]
+    message: 'AB test updated successfully',
+    abTest: abTests[abTestIndex]
   });
 });
 
-// ==================== GEMINI AI INTEGRATION ====================
-
-let aiChatHistory = [
-  {
-    id: '1',
-    userId: 'admin-1',
-    userName: 'JafaSol Super Admin',
-    message: 'How can I improve school performance?',
-    response: 'Based on your data, I recommend focusing on attendance tracking and parent communication. Schools with active parent engagement show 25% better performance.',
-    timestamp: '2024-07-30T10:00:00Z',
-    type: 'insight'
-  },
-  {
-    id: '2',
-    userId: 'admin-1',
-    userName: 'JafaSol Super Admin',
-    message: 'What are the best practices for fee collection?',
-    response: 'Implement automated reminders, offer multiple payment methods, and provide clear payment schedules. Schools using digital payments see 40% faster collections.',
-    timestamp: '2024-07-30T09:30:00Z',
-    type: 'recommendation'
-  }
-];
-
-let aiInsights = [
-  {
-    id: '1',
-    type: 'performance',
-    title: 'Attendance Impact on Grades',
-    description: 'Schools with 95%+ attendance show 15% higher average grades',
-    data: {
-      highAttendance: { count: 12, avgGrade: 85 },
-      lowAttendance: { count: 8, avgGrade: 72 }
-    },
-    recommendation: 'Implement automated attendance tracking and parent notifications',
-    timestamp: '2024-07-30T10:00:00Z'
-  },
-  {
-    id: '2',
-    type: 'revenue',
-    title: 'Payment Method Analysis',
-    description: 'Digital payments are 3x faster than cash payments',
-    data: {
-      digital: { avgTime: 2.3, successRate: 94 },
-      cash: { avgTime: 7.1, successRate: 87 }
-    },
-    recommendation: 'Encourage digital payment adoption with incentives',
-    timestamp: '2024-07-30T09:00:00Z'
-  }
-];
-
-// AI Chat
-app.post('/api/admin/ai/chat', (req, res) => {
-  const { message, userId, userName } = req.body;
+// Update AB test metrics
+app.put('/api/admin/features/ab-tests/:id/metrics', (req, res) => {
+  const { id } = req.params;
+  const { metrics } = req.body;
   
-  // Simulate AI response based on message content
-  let response = '';
-  let type = 'general';
-  
-  if (message.toLowerCase().includes('performance') || message.toLowerCase().includes('grades')) {
-    response = 'To improve school performance, focus on attendance tracking, parent communication, and regular assessments. Schools with active parent engagement show 25% better performance.';
-    type = 'insight';
-  } else if (message.toLowerCase().includes('fee') || message.toLowerCase().includes('payment')) {
-    response = 'For better fee collection: implement automated reminders, offer multiple payment methods, and provide clear payment schedules. Digital payments are 3x faster than cash.';
-    type = 'recommendation';
-  } else if (message.toLowerCase().includes('attendance')) {
-    response = 'Attendance tracking best practices: use automated systems, send parent notifications, and analyze patterns. Schools with 95%+ attendance show 15% higher grades.';
-    type = 'insight';
-  } else {
-    response = 'I can help you with school performance analysis, fee collection strategies, attendance tracking, and general administrative insights. What specific area would you like to explore?';
-    type = 'general';
+  const abTestIndex = abTests.findIndex(t => t.id === id);
+  if (abTestIndex === -1) {
+    return res.status(404).json({
+      error: 'AB test not found',
+      message: `AB test with ID '${id}' does not exist`
+    });
   }
   
-  const chatEntry = {
-    id: `chat_${Date.now()}`,
-    userId,
-    userName,
-    message,
-    response,
-    timestamp: new Date().toISOString(),
-    type
-  };
-  
-  aiChatHistory.push(chatEntry);
+  abTests[abTestIndex].metrics = metrics;
   
   res.json({
-    message: 'AI response generated successfully',
-    chat: chatEntry
+    message: 'AB test metrics updated successfully',
+    abTest: abTests[abTestIndex]
   });
 });
 
-// Get AI chat history
-app.get('/api/admin/ai/chat', (req, res) => {
-  const { userId, type } = req.query;
+// Delete AB test
+app.delete('/api/admin/features/ab-tests/:id', (req, res) => {
+  const { id } = req.params;
   
-  let filteredChat = aiChatHistory;
-  
-  if (userId) {
-    filteredChat = filteredChat.filter(chat => chat.userId === userId);
+  const abTestIndex = abTests.findIndex(t => t.id === id);
+  if (abTestIndex === -1) {
+    return res.status(404).json({
+      error: 'AB test not found',
+      message: `AB test with ID '${id}' does not exist`
+    });
   }
   
-  if (type) {
-    filteredChat = filteredChat.filter(chat => chat.type === type);
-  }
+  const deletedABTest = abTests.splice(abTestIndex, 1)[0];
   
   res.json({
-    message: 'AI chat history retrieved successfully',
-    chatHistory: filteredChat
-  });
-});
-
-// Get AI insights
-app.get('/api/admin/ai/insights', (req, res) => {
-  const { type } = req.query;
-  
-  let filteredInsights = aiInsights;
-  
-  if (type) {
-    filteredInsights = filteredInsights.filter(insight => insight.type === type);
-  }
-  
-  res.json({
-    message: 'AI insights retrieved successfully',
-    insights: filteredInsights
-  });
-});
-
-// Generate AI insights
-app.post('/api/admin/ai/insights/generate', (req, res) => {
-  const { type, data } = req.body;
-  
-  // Simulate AI insight generation
-  const newInsight = {
-    id: `insight_${Date.now()}`,
-    type: type || 'performance',
-    title: 'AI-Generated Insight',
-    description: 'This insight was generated based on your platform data',
-    data: data || {},
-    recommendation: 'Consider implementing the suggested improvements',
-    timestamp: new Date().toISOString()
-  };
-  
-  aiInsights.push(newInsight);
-  
-  res.json({
-    message: 'AI insight generated successfully',
-    insight: newInsight
-  });
-});
-
-// AI recommendations
-app.get('/api/admin/ai/recommendations', (req, res) => {
-  const recommendations = [
-    {
-      id: '1',
-      category: 'performance',
-      title: 'Improve Attendance Tracking',
-      description: 'Implement automated attendance systems to boost grades by 15%',
-      priority: 'high',
-      impact: '15% grade improvement',
-      effort: 'medium'
-    },
-    {
-      id: '2',
-      category: 'revenue',
-      title: 'Digital Payment Adoption',
-      description: 'Encourage digital payments to speed up collections by 3x',
-      priority: 'medium',
-      impact: '3x faster collections',
-      effort: 'low'
-    },
-    {
-      id: '3',
-      category: 'communication',
-      title: 'Parent Engagement Program',
-      description: 'Increase parent communication to improve student performance',
-      priority: 'high',
-      impact: '25% performance boost',
-      effort: 'high'
-    }
-  ];
-  
-  res.json({
-    message: 'AI recommendations retrieved successfully',
-    recommendations
-  });
-});
-
-// AI automated response
-app.post('/api/admin/ai/auto-response', (req, res) => {
-  const { query, context } = req.body;
-  
-  // Simulate automated response generation
-  let response = '';
-  
-  if (query.toLowerCase().includes('support') || query.toLowerCase().includes('help')) {
-    response = 'I can help you with technical support, feature questions, or general inquiries. Please provide more details about your specific issue.';
-  } else if (query.toLowerCase().includes('billing') || query.toLowerCase().includes('payment')) {
-    response = 'For billing inquiries, please check your subscription status in the billing section. You can also contact our support team for payment issues.';
-  } else if (query.toLowerCase().includes('feature') || query.toLowerCase().includes('update')) {
-    response = 'New features are regularly added to the platform. Check the announcements section for the latest updates and feature releases.';
-  } else {
-    response = 'Thank you for your inquiry. I\'ll forward this to our support team who will get back to you within 24 hours.';
-  }
-  
-  res.json({
-    message: 'Automated response generated',
-    response,
-    confidence: 0.85
+    message: 'AB test deleted successfully',
+    abTest: deletedABTest
   });
 });
 
