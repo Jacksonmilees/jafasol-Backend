@@ -27,6 +27,7 @@ const settingsRoutes = require('./routes/settings');
 const uploadRoutes = require('./routes/upload');
 const aiRoutes = require('./routes/ai');
 const notificationRoutes = require('./routes/notifications');
+const adminRoutes = require('./routes/admin');
 
 const { errorHandler } = require('./middleware/errorHandler');
 const { authenticateToken } = require('./middleware/auth');
@@ -95,6 +96,7 @@ app.use('/api/settings', authenticateToken, settingsRoutes);
 app.use('/api/upload', authenticateToken, uploadRoutes);
 app.use('/api/ai', authenticateToken, aiRoutes);
 app.use('/api/notifications', authenticateToken, notificationRoutes);
+app.use('/api/admin', authenticateToken, adminRoutes);
 
 // 404 handler
 app.use('*', (req, res) => {
