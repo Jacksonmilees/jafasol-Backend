@@ -122,6 +122,13 @@ userSchema.index({ email: 1 });
 userSchema.index({ roleId: 1 });
 userSchema.index({ status: 1 });
 
+// Multi-tenant model factory
+const createUserModel = (connection) => {
+  return connection.model('User', userSchema);
+};
+
+// Default export for backward compatibility
 const User = mongoose.model('User', userSchema);
 
-module.exports = User; 
+module.exports = User;
+module.exports.createUserModel = createUserModel; 
