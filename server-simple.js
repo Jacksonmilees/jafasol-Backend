@@ -211,6 +211,43 @@ app.get('/api/notifications', (req, res) => {
   });
 });
 
+// ==================== AUTH ROUTES ====================
+
+// Admin login
+app.post('/api/auth/login', (req, res) => {
+  try {
+    const { email, password } = req.body;
+    
+    // Mock admin authentication
+    if (email === 'admin@jafasol.com' && password === 'password') {
+      const token = 'mock-jwt-token-' + Date.now();
+      const user = {
+        id: 'admin-1',
+        name: 'JafaSol Super Admin',
+        email: email,
+        role: 'super_admin'
+      };
+      
+      res.json({
+        message: 'Login successful',
+        token,
+        user
+      });
+    } else {
+      res.status(401).json({
+        error: 'Invalid credentials',
+        message: 'Email or password is incorrect'
+      });
+    }
+  } catch (error) {
+    console.error('Login error:', error);
+    res.status(500).json({
+      error: 'Login failed',
+      message: error.message
+    });
+  }
+});
+
 // ==================== ADMIN ROUTES ====================
 
 // Admin authentication middleware
@@ -397,18 +434,33 @@ app.post('/api/admin/schools', (req, res) => {
   try {
     const schoolData = req.body;
     
+    // Generate school credentials
+    const schoolId = Date.now().toString();
+    const generatedPassword = Math.random().toString(36).slice(-8);
+    const generatedUsername = `admin@${schoolData.subdomain || schoolData.name.toLowerCase().replace(/\s+/g, '')}.jafasol.com`;
+    
     // Mock response for creating school
     const newSchool = {
-      id: Date.now().toString(),
+      id: schoolId,
       ...schoolData,
       status: 'pending',
       createdAt: new Date().toISOString(),
-      stats: { users: 0, students: 0, teachers: 0 }
+      stats: { users: 0, students: 0, teachers: 0 },
+      credentials: {
+        username: generatedUsername,
+        password: generatedPassword,
+        loginUrl: `https://${schoolData.subdomain || schoolData.name.toLowerCase().replace(/\s+/g, '')}.jafasol.com`
+      }
     };
 
     res.status(201).json({
-      message: 'School created successfully',
-      school: newSchool
+      message: 'School created successfully with login credentials',
+      school: newSchool,
+      credentials: {
+        username: generatedUsername,
+        password: generatedPassword,
+        loginUrl: `https://${schoolData.subdomain || schoolData.name.toLowerCase().replace(/\s+/g, '')}.jafasol.com`
+      }
     });
   } catch (error) {
     console.error('Create school error:', error);
