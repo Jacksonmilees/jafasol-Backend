@@ -284,6 +284,200 @@ app.post('/api/admin/ai/chat', (req, res) => {
   }
 });
 
+// Subdomain Health Check
+app.get('/api/admin/subdomains/:id/health', (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Mock health check response
+    const healthData = {
+      id,
+      status: 'online',
+      uptime: 99.9,
+      responseTime: 120,
+      sslStatus: 'active',
+      lastChecked: new Date().toISOString(),
+      issues: []
+    };
+    
+    res.json({
+      message: 'Health check completed successfully',
+      health: healthData
+    });
+  } catch (error) {
+    console.error('Health check error:', error);
+    res.status(500).json({
+      error: 'Health check failed',
+      message: error.message
+    });
+  }
+});
+
+// Provision Subdomain
+app.post('/api/admin/subdomains/:id/provision', (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Mock provisioning response
+    const provisionData = {
+      id,
+      status: 'provisioned',
+      serverUrl: `https://${id}.jafasol.com`,
+      sslCertificate: 'active',
+      dnsRecords: [
+        { type: 'A', name: id, value: '192.168.1.1' },
+        { type: 'CNAME', name: `www.${id}`, value: `${id}.jafasol.com` }
+      ],
+      provisionedAt: new Date().toISOString()
+    };
+    
+    res.json({
+      message: 'Subdomain provisioned successfully',
+      provision: provisionData
+    });
+  } catch (error) {
+    console.error('Provision error:', error);
+    res.status(500).json({
+      error: 'Provision failed',
+      message: error.message
+    });
+  }
+});
+
+// Get Subdomain Analytics
+app.get('/api/admin/subdomains/:id/analytics', (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Mock analytics data
+    const analyticsData = {
+      id,
+      uptime: 99.9,
+      responseTime: 120,
+      traffic: {
+        daily: 1500,
+        weekly: 10500,
+        monthly: 45000
+      },
+      visitors: {
+        unique: 850,
+        returning: 650
+      },
+      performance: {
+        loadTime: 1.2,
+        serverLoad: 45
+      },
+      lastUpdated: new Date().toISOString()
+    };
+    
+    res.json({
+      message: 'Analytics retrieved successfully',
+      analytics: analyticsData
+    });
+  } catch (error) {
+    console.error('Analytics error:', error);
+    res.status(500).json({
+      error: 'Analytics failed',
+      message: error.message
+    });
+  }
+});
+
+// Bulk Provision Subdomains
+app.post('/api/admin/subdomains/bulk-provision', (req, res) => {
+  try {
+    const { subdomainIds } = req.body;
+    
+    // Mock bulk provisioning response
+    const results = subdomainIds.map(id => ({
+      id,
+      status: 'provisioned',
+      serverUrl: `https://${id}.jafasol.com`,
+      provisionedAt: new Date().toISOString()
+    }));
+    
+    res.json({
+      message: 'Bulk provisioning completed successfully',
+      results
+    });
+  } catch (error) {
+    console.error('Bulk provision error:', error);
+    res.status(500).json({
+      error: 'Bulk provision failed',
+      message: error.message
+    });
+  }
+});
+
+// Get Subdomain Templates
+app.get('/api/admin/subdomains/templates', (req, res) => {
+  try {
+    // Mock templates data
+    const templates = [
+      {
+        id: 'basic',
+        name: 'Basic Template',
+        description: 'Standard hosting configuration',
+        features: ['SSL Certificate', 'Basic DNS', 'CDN'],
+        price: 0
+      },
+      {
+        id: 'premium',
+        name: 'Premium Template',
+        description: 'Advanced hosting with monitoring',
+        features: ['SSL Certificate', 'Advanced DNS', 'CDN', 'Monitoring', 'Backup'],
+        price: 5000
+      },
+      {
+        id: 'enterprise',
+        name: 'Enterprise Template',
+        description: 'Full-featured hosting solution',
+        features: ['SSL Certificate', 'Advanced DNS', 'CDN', 'Monitoring', 'Backup', 'Load Balancer', 'DDoS Protection'],
+        price: 15000
+      }
+    ];
+    
+    res.json({
+      message: 'Templates retrieved successfully',
+      templates
+    });
+  } catch (error) {
+    console.error('Templates error:', error);
+    res.status(500).json({
+      error: 'Templates failed',
+      message: error.message
+    });
+  }
+});
+
+// Apply Subdomain Template
+app.post('/api/admin/subdomains/:id/apply-template', (req, res) => {
+  try {
+    const { id } = req.params;
+    const { templateId } = req.body;
+    
+    // Mock template application
+    const appliedTemplate = {
+      id,
+      templateId,
+      appliedAt: new Date().toISOString(),
+      status: 'applied',
+      features: ['SSL Certificate', 'Basic DNS', 'CDN']
+    };
+    
+    res.json({
+      message: 'Template applied successfully',
+      template: appliedTemplate
+    });
+  } catch (error) {
+    console.error('Template application error:', error);
+    res.status(500).json({
+      error: 'Template application failed',
+      message: error.message
+    });
+  }
+});
+
 // Notifications API
 app.get('/api/notifications', (req, res) => {
   res.json({
