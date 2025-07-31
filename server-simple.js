@@ -233,6 +233,57 @@ app.get('/api/ai', (req, res) => {
   });
 });
 
+// Admin AI Chat
+app.get('/api/admin/ai/chat', (req, res) => {
+  res.json({
+    message: 'AI chat history retrieved successfully',
+    data: []
+  });
+});
+
+// Admin AI Insights
+app.get('/api/admin/ai/insights', (req, res) => {
+  res.json({
+    message: 'AI insights retrieved successfully',
+    data: []
+  });
+});
+
+// Admin AI Recommendations
+app.get('/api/admin/ai/recommendations', (req, res) => {
+  res.json({
+    message: 'AI recommendations retrieved successfully',
+    data: []
+  });
+});
+
+// Admin AI Message
+app.post('/api/admin/ai/chat', (req, res) => {
+  try {
+    const { message, userId, userName } = req.body;
+    
+    // Mock AI response
+    const response = {
+      id: Date.now().toString(),
+      message: `AI response to: ${message}`,
+      timestamp: new Date().toISOString(),
+      userId,
+      userName
+    };
+    
+    res.json({
+      message: 'AI message sent successfully',
+      response
+    });
+  } catch (error) {
+    console.error('AI chat error:', error);
+    res.status(500).json({
+      error: 'AI chat failed',
+      message: error.message
+    });
+  }
+});
+
 // Notifications API
 app.get('/api/notifications', (req, res) => {
   res.json({
