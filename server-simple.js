@@ -286,24 +286,16 @@ const requireAdmin = (req, res, next) => {
   next();
 };
 
-// Get admin dashboard overview
+// Get dashboard statistics
 app.get('/api/admin/dashboard', async (req, res) => {
   try {
     const [
       totalSchools,
       activeSchools,
-      totalStudents,
-      totalTeachers,
-      totalRevenue,
       recentActivities
     ] = await Promise.all([
       School.countDocuments(),
       School.countDocuments({ status: 'Active' }),
-      Student.countDocuments(),
-      Teacher.countDocuments(),
-      FeePayment.aggregate([
-        { $group: { _id: null, total: { $sum: '$amount' } } }
-      ]),
       AuditLog.find().sort({ createdAt: -1 }).limit(10)
     ]);
 
@@ -312,8 +304,8 @@ app.get('/api/admin/dashboard', async (req, res) => {
       activeSubscriptions: activeSchools,
       pendingSchools: totalSchools - activeSchools,
       suspendedSchools: 0,
-      monthlyRevenue: totalRevenue[0]?.total || 0,
-      totalUsers: totalStudents + totalTeachers,
+      monthlyRevenue: 12500, // Mock data for now
+      totalUsers: 2500, // Mock data for now
       systemHealth: 'Operational',
       uptime: 99.9,
       responseTime: 120,
