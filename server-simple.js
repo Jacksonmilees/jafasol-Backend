@@ -2098,6 +2098,63 @@ app.get('/api/admin/features', (req, res) => {
   });
 });
 
+// Get AB tests
+app.get('/api/admin/features/ab-tests', async (req, res) => {
+  try {
+    const abTests = [
+      {
+        id: '1',
+        name: 'New Dashboard Layout',
+        description: 'Testing new dashboard layout vs current',
+        status: 'active',
+        variantA: {
+          name: 'Current Layout',
+          traffic: 50,
+          conversion: 12.5
+        },
+        variantB: {
+          name: 'New Layout',
+          traffic: 50,
+          conversion: 15.2
+        },
+        startDate: '2024-07-01T00:00:00Z',
+        endDate: '2024-07-31T00:00:00Z',
+        winner: 'variantB'
+      },
+      {
+        id: '2',
+        name: 'Payment Flow',
+        description: 'Testing simplified payment flow',
+        status: 'completed',
+        variantA: {
+          name: 'Original Flow',
+          traffic: 40,
+          conversion: 8.3
+        },
+        variantB: {
+          name: 'Simplified Flow',
+          traffic: 60,
+          conversion: 11.7
+        },
+        startDate: '2024-06-01T00:00:00Z',
+        endDate: '2024-06-30T00:00:00Z',
+        winner: 'variantB'
+      }
+    ];
+    
+    res.json({
+      message: 'AB tests retrieved successfully',
+      abTests
+    });
+  } catch (error) {
+    console.error('Error fetching AB tests:', error);
+    res.status(500).json({
+      error: 'Failed to fetch AB tests',
+      message: error.message
+    });
+  }
+});
+
 // Get specific feature toggle
 app.get('/api/admin/features/:id', (req, res) => {
   const { id } = req.params;
@@ -2363,63 +2420,6 @@ app.get('/api/admin/features', async (req, res) => {
     console.error('Error fetching feature toggles:', error);
     res.status(500).json({
       error: 'Failed to fetch feature toggles',
-      message: error.message
-    });
-  }
-});
-
-// Get AB tests
-app.get('/api/admin/features/ab-tests', async (req, res) => {
-  try {
-    const abTests = [
-      {
-        id: '1',
-        name: 'New Dashboard Layout',
-        description: 'Testing new dashboard layout vs current',
-        status: 'active',
-        variantA: {
-          name: 'Current Layout',
-          traffic: 50,
-          conversion: 12.5
-        },
-        variantB: {
-          name: 'New Layout',
-          traffic: 50,
-          conversion: 15.2
-        },
-        startDate: '2024-07-01T00:00:00Z',
-        endDate: '2024-07-31T00:00:00Z',
-        winner: 'variantB'
-      },
-      {
-        id: '2',
-        name: 'Payment Flow',
-        description: 'Testing simplified payment flow',
-        status: 'completed',
-        variantA: {
-          name: 'Original Flow',
-          traffic: 40,
-          conversion: 8.3
-        },
-        variantB: {
-          name: 'Simplified Flow',
-          traffic: 60,
-          conversion: 11.7
-        },
-        startDate: '2024-06-01T00:00:00Z',
-        endDate: '2024-06-30T00:00:00Z',
-        winner: 'variantB'
-      }
-    ];
-    
-    res.json({
-      message: 'AB tests retrieved successfully',
-      abTests
-    });
-  } catch (error) {
-    console.error('Error fetching AB tests:', error);
-    res.status(500).json({
-      error: 'Failed to fetch AB tests',
       message: error.message
     });
   }
