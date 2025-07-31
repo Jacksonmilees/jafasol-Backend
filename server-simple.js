@@ -9,22 +9,8 @@ require('dotenv').config();
 // Import models
 const User = require('./models/User');
 const School = require('./models/School');
-const Student = require('./models/Student');
-const Teacher = require('./models/Teacher');
-const SchoolClass = require('./models/SchoolClass');
-const Subject = require('./models/Subject');
-const FeeStructure = require('./models/FeeStructure');
-const FeeInvoice = require('./models/FeeInvoice');
-const FeePayment = require('./models/FeePayment');
-const AttendanceRecord = require('./models/AttendanceRecord');
-const Exam = require('./models/Exam');
-const Book = require('./models/Book');
-const BookIssue = require('./models/BookIssue');
-const LearningResource = require('./models/LearningResource');
-const Message = require('./models/Message');
-const TimetableEntry = require('./models/TimetableEntry');
-const AuditLog = require('./models/AuditLog');
 const Role = require('./models/Role');
+const AuditLog = require('./models/AuditLog');
 
 const { connectDB } = require('./config/database');
 
