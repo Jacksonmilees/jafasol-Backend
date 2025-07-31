@@ -6,6 +6,7 @@ const compression = require('compression');
 const rateLimit = require('express-rate-limit');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
+const redis = require('redis');
 require('dotenv').config();
 
 // Import models
@@ -22,6 +23,134 @@ const PORT = process.env.PORT || 5000;
 // JWT Secret (should be in environment variables)
 const JWT_SECRET = process.env.JWT_SECRET || 'your-super-secret-jwt-key-change-this-in-production';
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '24h';
+
+// Redis Client Setup
+let redisClient = null;
+const setupRedis = async () => {
+  try {
+    if (process.env.REDIS_URL) {
+      redisClient = redis.createClient({
+        url: process.env.REDIS_URL
+      });
+    } else {
+      // Fallback to memory cache if Redis not available
+      redisClient = null;
+    }
+    
+    if (redisClient) {
+      await redisClient.connect();
+      console.log('✅ Redis connected successfully');
+    } else {
+      console.log('⚠️ Redis not available, using memory cache');
+    }
+  } catch (error) {
+    console.log('⚠️ Redis connection failed, using memory cache:', error.message);
+    redisClient = null;
+  }
+};
+
+// Memory Cache (fallback)
+const memoryCache = new Map();
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+// Cache Service
+class CacheService {
+  constructor() {
+    this.redisClient = redisClient;
+    this.memoryCache = memoryCache;
+  }
+
+  async get(key) {
+    try {
+      if (this.redisClient) {
+        const value = await this.redisClient.get(key);
+        return value ? JSON.parse(value) : null;
+      } else {
+        const cached = this.memoryCache.get(key);
+        if (cached && Date.now() < cached.expiry) {
+          return cached.data;
+        }
+        this.memoryCache.delete(key);
+        return null;
+      }
+    } catch (error) {
+      console.error('Cache get error:', error);
+      return null;
+    }
+  }
+
+  async set(key, data, ttl = CACHE_TTL) {
+    try {
+      if (this.redisClient) {
+        await this.redisClient.setEx(key, Math.floor(ttl / 1000), JSON.stringify(data));
+      } else {
+        this.memoryCache.set(key, {
+          data,
+          expiry: Date.now() + ttl
+        });
+      }
+    } catch (error) {
+      console.error('Cache set error:', error);
+    }
+  }
+
+  async delete(key) {
+    try {
+      if (this.redisClient) {
+        await this.redisClient.del(key);
+      } else {
+        this.memoryCache.delete(key);
+      }
+    } catch (error) {
+      console.error('Cache delete error:', error);
+    }
+  }
+
+  async invalidatePattern(pattern) {
+    try {
+      if (this.redisClient) {
+        const keys = await this.redisClient.keys(pattern);
+        if (keys.length > 0) {
+          await this.redisClient.del(keys);
+        }
+      } else {
+        // For memory cache, we'll clear all (simplified)
+        this.memoryCache.clear();
+      }
+    } catch (error) {
+      console.error('Cache invalidate error:', error);
+    }
+  }
+}
+
+const cacheService = new CacheService();
+
+// Cache Middleware
+const cacheMiddleware = (ttl = CACHE_TTL, keyGenerator = null) => {
+  return async (req, res, next) => {
+    const cacheKey = keyGenerator ? keyGenerator(req) : `api:${req.originalUrl}:${req.user?.id || 'anonymous'}`;
+    
+    try {
+      const cached = await cacheService.get(cacheKey);
+      if (cached) {
+        return res.json(cached);
+      }
+    } catch (error) {
+      console.error('Cache middleware error:', error);
+    }
+
+    // Store original send method
+    const originalSend = res.json;
+    
+    // Override send method to cache response
+    res.json = function(data) {
+      cacheService.set(cacheKey, data, ttl);
+      originalSend.call(this, data);
+    };
+
+    next();
+  };
+};
 
 // Security middleware
 app.use(helmet());
@@ -231,7 +360,7 @@ app.get('/api/reports', (req, res) => {
 });
 
 // Dashboard API
-app.get('/api/dashboard', authenticateToken, requireAdmin, async (req, res) => {
+app.get('/api/dashboard', authenticateToken, requireAdmin, cacheMiddleware(2 * 60 * 1000), async (req, res) => {
   try {
     const [
       totalSchools,
@@ -713,7 +842,7 @@ app.get('/api/auth/verify', authenticateToken, (req, res) => {
 
 
 // List all schools with detailed info
-app.get('/api/admin/schools', async (req, res) => {
+app.get('/api/admin/schools', authenticateToken, requireAdmin, cacheMiddleware(5 * 60 * 1000), async (req, res) => {
   try {
     const schools = await School.find().sort({ createdAt: -1 });
     res.json({
