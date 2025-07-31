@@ -225,6 +225,35 @@ app.get('/api/upload', (req, res) => {
   });
 });
 
+// Upload logo for school
+app.post('/api/admin/schools/:id/logo', (req, res) => {
+  try {
+    const { id } = req.params;
+    const { logoUrl } = req.body;
+    
+    // In a real implementation, you would handle file upload here
+    // For now, we'll just return a success response
+    const logoData = {
+      id: `logo_${Date.now()}`,
+      schoolId: id,
+      logoUrl: logoUrl || `https://picsum.photos/seed/${Date.now()}/200/200`,
+      uploadedAt: new Date().toISOString(),
+      status: 'active'
+    };
+    
+    res.json({
+      message: 'Logo uploaded successfully',
+      logo: logoData
+    });
+  } catch (error) {
+    console.error('Logo upload error:', error);
+    res.status(500).json({
+      error: 'Logo upload failed',
+      message: error.message
+    });
+  }
+});
+
 // AI API
 app.get('/api/ai', (req, res) => {
   res.json({
