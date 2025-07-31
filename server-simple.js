@@ -4,6 +4,8 @@ const helmet = require('helmet');
 const morgan = require('morgan');
 const compression = require('compression');
 const rateLimit = require('express-rate-limit');
+const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
 require('dotenv').config();
 
 // Import models
@@ -17,6 +19,10 @@ const { connectDB } = require('./config/database');
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+// JWT Secret (should be in environment variables)
+const JWT_SECRET = process.env.JWT_SECRET || 'your-super-secret-jwt-key-change-this-in-production';
+const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '24h';
+
 // Security middleware
 app.use(helmet());
 app.use(compression());
@@ -29,6 +35,7 @@ app.use(cors({
     
     const allowedOrigins = [
       'http://localhost:3000',
+      'http://localhost:3001',
       'http://localhost:5173',
       'https://jafasol-admin.vercel.app',
       'https://jafasol-admin.netlify.app'
@@ -43,13 +50,35 @@ app.use(cors({
   credentials: true
 }));
 
-// Rate limiting
-const limiter = rateLimit({
-  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000,
-  max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 100,
-  message: 'Too many requests from this IP, please try again later.'
+// Rate limiting - Different limits for different endpoints
+const generalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // limit each IP to 100 requests per windowMs
+  message: 'Too many requests from this IP, please try again later.',
+  standardHeaders: true,
+  legacyHeaders: false,
 });
-app.use('/api/', limiter);
+
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5, // limit each IP to 5 login attempts per windowMs
+  message: 'Too many login attempts, please try again later.',
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 200, // limit each IP to 200 requests per windowMs
+  message: 'API rate limit exceeded, please try again later.',
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// Apply rate limiting
+app.use('/api/auth', authLimiter);
+app.use('/api/admin', apiLimiter);
+app.use('/api/', generalLimiter);
 
 // Body parsing middleware
 app.use(express.json({ limit: '10mb' }));
@@ -202,11 +231,42 @@ app.get('/api/reports', (req, res) => {
 });
 
 // Dashboard API
-app.get('/api/dashboard', (req, res) => {
-  res.json({
-    message: 'Dashboard endpoint - MongoDB ready',
-    data: []
-  });
+app.get('/api/dashboard', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const [
+      totalSchools,
+      activeSchools,
+      recentActivities
+    ] = await Promise.all([
+      School.countDocuments(),
+      School.countDocuments({ status: 'Active' }),
+      AuditLog.find().sort({ createdAt: -1 }).limit(10)
+    ]);
+
+    const stats = {
+      totalSchools: totalSchools,
+      activeSubscriptions: activeSchools,
+      pendingSchools: totalSchools - activeSchools,
+      suspendedSchools: 0,
+      monthlyRevenue: 12500, // Mock data for now
+      totalUsers: 2500, // Mock data for now
+      systemHealth: 'Operational',
+      uptime: 99.9,
+      responseTime: 120,
+      lastUpdated: new Date().toISOString()
+    };
+
+    res.json({
+      message: 'Dashboard stats retrieved successfully',
+      stats
+    });
+  } catch (error) {
+    console.error('Error fetching dashboard stats:', error);
+    res.status(500).json({
+      error: 'Failed to fetch dashboard stats',
+      message: error.message
+    });
+  }
 });
 
 // Settings API
@@ -406,7 +466,7 @@ app.get('/api/admin/subdomains/:id/analytics', (req, res) => {
   } catch (error) {
     console.error('Analytics error:', error);
     res.status(500).json({
-      error: 'Analytics failed',
+      error: 'Failed to get analytics',
       message: error.message
     });
   }
@@ -517,25 +577,87 @@ app.get('/api/notifications', (req, res) => {
 
 // ==================== AUTH ROUTES ====================
 
-// Admin login
-app.post('/api/auth/login', (req, res) => {
+// JWT Authentication Middleware
+const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
+
+  if (!token) {
+    return res.status(401).json({
+      error: 'Access token required',
+      message: 'Please provide a valid authentication token'
+    });
+  }
+
+  jwt.verify(token, JWT_SECRET, (err, user) => {
+    if (err) {
+      return res.status(403).json({
+        error: 'Invalid or expired token',
+        message: 'Please login again'
+      });
+    }
+    req.user = user;
+    next();
+  });
+};
+
+// Admin role verification middleware
+const requireAdmin = (req, res, next) => {
+  if (!req.user) {
+    return res.status(401).json({
+      error: 'Authentication required',
+      message: 'Please login to access this resource'
+    });
+  }
+
+  if (req.user.role !== 'SuperAdmin' && req.user.role !== 'Admin') {
+    return res.status(403).json({
+      error: 'Insufficient permissions',
+      message: 'Admin access required'
+    });
+  }
+
+  next();
+};
+
+// Login endpoint
+app.post('/api/auth/login', async (req, res) => {
   try {
     const { email, password } = req.body;
-    
-    // Mock admin authentication
+
+    if (!email || !password) {
+      return res.status(400).json({
+        error: 'Missing credentials',
+        message: 'Email and password are required'
+      });
+    }
+
+    // For demo purposes, allow admin login
     if (email === 'admin@jafasol.com' && password === 'password') {
-      const token = 'mock-jwt-token-' + Date.now();
       const user = {
-        id: 'admin-1',
-        name: 'JafaSol Super Admin',
-        email: email,
-        role: 'super_admin'
+        id: 'admin-001',
+        email: 'admin@jafasol.com',
+        name: 'Super Admin',
+        role: 'SuperAdmin'
       };
-      
+
+      const token = jwt.sign(user, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
+
+      // Log the login
+      await AuditLog.create({
+        userId: user.id,
+        action: 'LOGIN',
+        resource: 'AUTH',
+        details: `User ${user.email} logged in successfully`,
+        ipAddress: req.ip,
+        userAgent: req.get('User-Agent')
+      });
+
       res.json({
         message: 'Login successful',
         token,
-        user
+        user,
+        expiresIn: JWT_EXPIRES_IN
       });
     } else {
       res.status(401).json({
@@ -552,52 +674,43 @@ app.post('/api/auth/login', (req, res) => {
   }
 });
 
-// ==================== ADMIN ROUTES ====================
-
-// Admin authentication middleware
-const requireAdmin = (req, res, next) => {
-  // For now, allow all requests (no authentication required for testing)
-  next();
-};
-
-// Get dashboard statistics
-app.get('/api/admin/dashboard', async (req, res) => {
+// Logout endpoint
+app.post('/api/auth/logout', authenticateToken, async (req, res) => {
   try {
-    const [
-      totalSchools,
-      activeSchools,
-      recentActivities
-    ] = await Promise.all([
-      School.countDocuments(),
-      School.countDocuments({ status: 'Active' }),
-      AuditLog.find().sort({ createdAt: -1 }).limit(10)
-    ]);
-
-    const stats = {
-      totalSchools: totalSchools,
-      activeSubscriptions: activeSchools,
-      pendingSchools: totalSchools - activeSchools,
-      suspendedSchools: 0,
-      monthlyRevenue: 12500, // Mock data for now
-      totalUsers: 2500, // Mock data for now
-      systemHealth: 'Operational',
-      uptime: 99.9,
-      responseTime: 120,
-      lastUpdated: new Date().toISOString()
-    };
+    // Log the logout
+    await AuditLog.create({
+      userId: req.user.id,
+      action: 'LOGOUT',
+      resource: 'AUTH',
+      details: `User ${req.user.email} logged out`,
+      ipAddress: req.ip,
+      userAgent: req.get('User-Agent')
+    });
 
     res.json({
-      message: 'Dashboard stats retrieved successfully',
-      stats
+      message: 'Logout successful'
     });
   } catch (error) {
-    console.error('Error fetching dashboard stats:', error);
+    console.error('Logout error:', error);
     res.status(500).json({
-      error: 'Failed to fetch dashboard stats',
+      error: 'Logout failed',
       message: error.message
     });
   }
 });
+
+// Verify token endpoint
+app.get('/api/auth/verify', authenticateToken, (req, res) => {
+  res.json({
+    message: 'Token is valid',
+    user: req.user
+  });
+});
+
+// ==================== ADMIN ROUTES ====================
+
+// Admin authentication middleware
+
 
 // List all schools with detailed info
 app.get('/api/admin/schools', async (req, res) => {
