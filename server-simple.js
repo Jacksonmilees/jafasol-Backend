@@ -65,8 +65,8 @@ app.use('/uploads', express.static('uploads'));
 
 // Health check endpoint
 app.get('/health', (req, res) => {
-  res.json({
-    status: 'OK',
+  res.json({ 
+    status: 'OK', 
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV,
     message: 'JafaSol School Management System API',
@@ -668,7 +668,7 @@ app.post('/api/admin/schools', async (req, res) => {
     });
     
     await newSchool.save();
-    
+
     res.status(201).json({
       message: 'School created successfully with auto-generated subdomain',
       school: newSchool
@@ -698,7 +698,7 @@ app.put('/api/admin/schools/:id', async (req, res) => {
         message: `School with ID '${req.params.id}' does not exist`
       });
     }
-    
+
     res.json({
       message: 'School updated successfully',
       school
