@@ -6,6 +6,26 @@ const compression = require('compression');
 const rateLimit = require('express-rate-limit');
 require('dotenv').config();
 
+// Import models
+const User = require('./models/User');
+const School = require('./models/School');
+const Student = require('./models/Student');
+const Teacher = require('./models/Teacher');
+const SchoolClass = require('./models/SchoolClass');
+const Subject = require('./models/Subject');
+const FeeStructure = require('./models/FeeStructure');
+const FeeInvoice = require('./models/FeeInvoice');
+const FeePayment = require('./models/FeePayment');
+const AttendanceRecord = require('./models/AttendanceRecord');
+const Exam = require('./models/Exam');
+const Book = require('./models/Book');
+const BookIssue = require('./models/BookIssue');
+const LearningResource = require('./models/LearningResource');
+const Message = require('./models/Message');
+const TimetableEntry = require('./models/TimetableEntry');
+const AuditLog = require('./models/AuditLog');
+const Role = require('./models/Role');
+
 const { connectDB } = require('./config/database');
 
 const app = express();
@@ -281,22 +301,37 @@ const requireAdmin = (req, res, next) => {
 };
 
 // Get admin dashboard overview
-app.get('/api/admin/dashboard', (req, res) => {
+app.get('/api/admin/dashboard', async (req, res) => {
   try {
-    // Mock data for admin dashboard
+    const [
+      totalSchools,
+      activeSchools,
+      totalStudents,
+      totalTeachers,
+      totalRevenue,
+      recentActivities
+    ] = await Promise.all([
+      School.countDocuments(),
+      School.countDocuments({ status: 'Active' }),
+      Student.countDocuments(),
+      Teacher.countDocuments(),
+      FeePayment.aggregate([
+        { $group: { _id: null, total: { $sum: '$amount' } } }
+      ]),
+      AuditLog.find().sort({ createdAt: -1 }).limit(10)
+    ]);
+
     const stats = {
-      totalSchools: 25,
-      activeSubscriptions: 23,
-      pendingSchools: 2,
+      totalSchools: totalSchools,
+      activeSubscriptions: activeSchools,
+      pendingSchools: totalSchools - activeSchools,
       suspendedSchools: 0,
-      monthlyRevenue: 12500,
-      totalUsers: 2500,
-      systemHealth: {
-        database: 'Excellent',
-        performance: 'Good',
-        uptime: '99.9%',
-        lastBackup: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()
-      }
+      monthlyRevenue: totalRevenue[0]?.total || 0,
+      totalUsers: totalStudents + totalTeachers,
+      systemHealth: 'Operational',
+      uptime: 99.9,
+      responseTime: 120,
+      lastUpdated: new Date().toISOString()
     };
 
     res.json({
@@ -304,190 +339,90 @@ app.get('/api/admin/dashboard', (req, res) => {
       stats
     });
   } catch (error) {
-    console.error('Dashboard stats error:', error);
+    console.error('Error fetching dashboard stats:', error);
     res.status(500).json({
-      error: 'Failed to get dashboard stats',
+      error: 'Failed to fetch dashboard stats',
       message: error.message
     });
   }
 });
 
 // List all schools with detailed info
-app.get('/api/admin/schools', (req, res) => {
+app.get('/api/admin/schools', async (req, res) => {
   try {
-    const { page = 1, limit = 10, search = '', status = '', plan = '' } = req.query;
-    
-    // Mock schools data
-    const mockSchools = [
-      {
-        id: '1',
-        name: 'St. Mary\'s Academy',
-        domain: 'stmarys.jafasol.com',
-        status: 'active',
-        subscriptionPlan: 'Premium',
-        createdAt: '2024-01-15',
-        stats: { users: 150, students: 120, teachers: 30 },
-        contactEmail: 'admin@stmarys.edu'
-      },
-      {
-        id: '2',
-        name: 'Bright Future School',
-        domain: 'brightfuture.jafasol.com',
-        status: 'active',
-        subscriptionPlan: 'Basic',
-        createdAt: '2024-02-01',
-        stats: { users: 80, students: 65, teachers: 15 },
-        contactEmail: 'info@brightfuture.edu'
-      },
-      {
-        id: '3',
-        name: 'Excellence Academy',
-        domain: 'excellence.jafasol.com',
-        status: 'pending',
-        subscriptionPlan: 'Enterprise',
-        createdAt: '2024-03-10',
-        stats: { users: 200, students: 180, teachers: 20 },
-        contactEmail: 'admin@excellence.edu'
-      },
-      {
-        id: '4',
-        name: 'Innovation School',
-        domain: 'innovation.jafasol.com',
-        status: 'active',
-        subscriptionPlan: 'Premium',
-        createdAt: '2024-01-20',
-        stats: { users: 120, students: 100, teachers: 20 },
-        contactEmail: 'admin@innovation.edu'
-      },
-      {
-        id: '5',
-        name: 'Future Leaders Academy',
-        domain: 'futureleaders.jafasol.com',
-        status: 'active',
-        subscriptionPlan: 'Basic',
-        createdAt: '2024-02-15',
-        stats: { users: 90, students: 75, teachers: 15 },
-        contactEmail: 'info@futureleaders.edu'
-      }
-    ];
-    
-    // Filter schools based on query parameters
-    let filteredSchools = mockSchools;
-    
-    if (search) {
-      filteredSchools = mockSchools.filter(school => 
-        school.name.toLowerCase().includes(search.toLowerCase()) ||
-        school.domain.toLowerCase().includes(search.toLowerCase())
-      );
-    }
-    
-    if (status) {
-      filteredSchools = filteredSchools.filter(school => school.status === status);
-    }
-    
-    if (plan) {
-      filteredSchools = filteredSchools.filter(school => school.subscriptionPlan.toLowerCase() === plan.toLowerCase());
-    }
-    
-    // Pagination
-    const startIndex = (page - 1) * limit;
-    const endIndex = startIndex + parseInt(limit);
-    const paginatedSchools = filteredSchools.slice(startIndex, endIndex);
-    
+    const schools = await School.find().sort({ createdAt: -1 });
     res.json({
       message: 'Schools retrieved successfully',
-      schools: paginatedSchools,
-      pagination: {
-        page: parseInt(page),
-        limit: parseInt(limit),
-        total: filteredSchools.length,
-        pages: Math.ceil(filteredSchools.length / limit)
-      }
+      schools
     });
   } catch (error) {
-    console.error('Schools error:', error);
+    console.error('Error fetching schools:', error);
     res.status(500).json({
-      error: 'Failed to get schools',
+      error: 'Failed to fetch schools',
       message: error.message
     });
   }
 });
 
 // Get school details
-app.get('/api/admin/schools/:id', (req, res) => {
+app.get('/api/admin/schools/:id', async (req, res) => {
   try {
-    const { id } = req.params;
-    
-    // Mock school details
-    const schoolDetails = {
-      id,
-      name: 'St. Mary\'s Academy',
-      domain: 'stmarys.jafasol.com',
-      status: 'active',
-      subscriptionPlan: 'Premium',
-      createdAt: '2024-01-15',
-      expiresAt: '2025-01-15',
-      stats: { users: 150, students: 120, teachers: 30 },
-      contactEmail: 'admin@stmarys.edu',
-      contactPhone: '+1234567890',
-      address: '123 School Street, City, State 12345',
-      features: ['Dashboard', 'Student Management', 'Fee Management', 'Library', 'Transport'],
-      usage: {
-        storageUsed: '2.5GB',
-        storageLimit: '10GB',
-        lastActive: '2024-07-30T10:30:00Z',
-        monthlyLogins: 450
-      }
-    };
-
+    const school = await School.findById(req.params.id);
+    if (!school) {
+      return res.status(404).json({
+        error: 'School not found',
+        message: `School with ID '${req.params.id}' does not exist`
+      });
+    }
     res.json({
       message: 'School details retrieved successfully',
-      school: schoolDetails
+      school
     });
   } catch (error) {
-    console.error('School details error:', error);
+    console.error('Error fetching school:', error);
     res.status(500).json({
-      error: 'Failed to get school details',
+      error: 'Failed to fetch school',
       message: error.message
     });
   }
 });
 
 // Create new school
-app.post('/api/admin/schools', (req, res) => {
+app.post('/api/admin/schools', async (req, res) => {
   try {
-    const schoolData = req.body;
+    const { name, email, phone, plan, status, modules } = req.body;
     
-    // Generate school credentials
-    const schoolId = Date.now().toString();
-    const generatedPassword = Math.random().toString(36).slice(-8);
-    const generatedUsername = `admin@${schoolData.subdomain || schoolData.name.toLowerCase().replace(/\s+/g, '')}.jafasol.com`;
+    // Check if school already exists
+    const existingSchool = await School.findOne({ email });
+    if (existingSchool) {
+      return res.status(409).json({
+        error: 'School already exists',
+        message: `School with email '${email}' already exists`
+      });
+    }
     
-    // Mock response for creating school
-    const newSchool = {
-      id: schoolId,
-      ...schoolData,
-      status: 'pending',
-      createdAt: new Date().toISOString(),
-      stats: { users: 0, students: 0, teachers: 0 },
-      credentials: {
-        username: generatedUsername,
-        password: generatedPassword,
-        loginUrl: `https://${schoolData.subdomain || schoolData.name.toLowerCase().replace(/\s+/g, '')}.jafasol.com`
-      }
-    };
-
+    // Auto-generate subdomain
+    const subdomain = generateUniqueSubdomain(name);
+    
+    const newSchool = new School({
+      name,
+      email,
+      phone,
+      plan: plan || 'Basic',
+      status: status || 'Active',
+      subdomain,
+      storageUsage: Math.floor(Math.random() * 50) + 10,
+      modules: modules || ['attendance', 'fees', 'academics']
+    });
+    
+    await newSchool.save();
+    
     res.status(201).json({
-      message: 'School created successfully with login credentials',
-      school: newSchool,
-      credentials: {
-        username: generatedUsername,
-        password: generatedPassword,
-        loginUrl: `https://${schoolData.subdomain || schoolData.name.toLowerCase().replace(/\s+/g, '')}.jafasol.com`
-      }
+      message: 'School created successfully with auto-generated subdomain',
+      school: newSchool
     });
   } catch (error) {
-    console.error('Create school error:', error);
+    console.error('Error creating school:', error);
     res.status(500).json({
       error: 'Failed to create school',
       message: error.message
@@ -496,24 +431,28 @@ app.post('/api/admin/schools', (req, res) => {
 });
 
 // Update school
-app.put('/api/admin/schools/:id', (req, res) => {
+app.put('/api/admin/schools/:id', async (req, res) => {
   try {
-    const { id } = req.params;
     const updates = req.body;
+    const school = await School.findByIdAndUpdate(
+      req.params.id,
+      { ...updates, updatedAt: new Date() },
+      { new: true }
+    );
     
-    // Mock response for updating school
-    const updatedSchool = {
-      id,
-      ...updates,
-      updatedAt: new Date().toISOString()
-    };
-
+    if (!school) {
+      return res.status(404).json({
+        error: 'School not found',
+        message: `School with ID '${req.params.id}' does not exist`
+      });
+    }
+    
     res.json({
       message: 'School updated successfully',
-      school: updatedSchool
+      school
     });
   } catch (error) {
-    console.error('Update school error:', error);
+    console.error('Error updating school:', error);
     res.status(500).json({
       error: 'Failed to update school',
       message: error.message
@@ -522,17 +461,23 @@ app.put('/api/admin/schools/:id', (req, res) => {
 });
 
 // Delete school
-app.delete('/api/admin/schools/:id', (req, res) => {
+app.delete('/api/admin/schools/:id', async (req, res) => {
   try {
-    const { id } = req.params;
+    const school = await School.findByIdAndDelete(req.params.id);
     
-    // Mock response for deleting school
+    if (!school) {
+      return res.status(404).json({
+        error: 'School not found',
+        message: `School with ID '${req.params.id}' does not exist`
+      });
+    }
+    
     res.json({
       message: 'School deleted successfully',
-      schoolId: id
+      school
     });
   } catch (error) {
-    console.error('Delete school error:', error);
+    console.error('Error deleting school:', error);
     res.status(500).json({
       error: 'Failed to delete school',
       message: error.message
@@ -2043,129 +1988,23 @@ let supportTickets = [
 ];
 
 // Get all support tickets
-app.get('/api/admin/support/tickets', (req, res) => {
-  res.json({
-    message: 'Support tickets retrieved successfully',
-    tickets: supportTickets
-  });
-});
-
-// Get specific support ticket
-app.get('/api/admin/support/tickets/:id', (req, res) => {
-  const { id } = req.params;
-  const ticket = supportTickets.find(t => t.id === id);
-  
-  if (!ticket) {
-    return res.status(404).json({
-      error: 'Support ticket not found',
-      message: `Ticket with ID '${id}' does not exist`
+app.get('/api/admin/support/tickets', async (req, res) => {
+  try {
+    const tickets = await Message.find({ type: 'support' })
+      .populate('schoolId', 'name')
+      .sort({ createdAt: -1 });
+    
+    res.json({
+      message: 'Support tickets retrieved successfully',
+      tickets
+    });
+  } catch (error) {
+    console.error('Error fetching support tickets:', error);
+    res.status(500).json({
+      error: 'Failed to fetch support tickets',
+      message: error.message
     });
   }
-  
-  res.json({
-    message: 'Support ticket retrieved successfully',
-    ticket
-  });
-});
-
-// Create new support ticket
-app.post('/api/admin/support/tickets', (req, res) => {
-  const { schoolId, schoolName, subject, description, priority } = req.body;
-  
-  const newTicket = {
-    id: `ticket_${Date.now()}`,
-    schoolId,
-    schoolName,
-    subject,
-    description,
-    status: 'open',
-    priority: priority || 'medium',
-    lastUpdated: new Date().toISOString(),
-    conversation: [
-      { id: '1', sender: 'School Admin', message: description, timestamp: new Date().toISOString() }
-    ]
-  };
-  
-  supportTickets.push(newTicket);
-  
-  res.status(201).json({
-    message: 'Support ticket created successfully',
-    ticket: newTicket
-  });
-});
-
-// Update support ticket
-app.put('/api/admin/support/tickets/:id', (req, res) => {
-  const { id } = req.params;
-  const updates = req.body;
-  
-  const ticketIndex = supportTickets.findIndex(t => t.id === id);
-  if (ticketIndex === -1) {
-    return res.status(404).json({
-      error: 'Support ticket not found',
-      message: `Ticket with ID '${id}' does not exist`
-    });
-  }
-  
-  supportTickets[ticketIndex] = {
-    ...supportTickets[ticketIndex],
-    ...updates,
-    lastUpdated: new Date().toISOString()
-  };
-  
-  res.json({
-    message: 'Support ticket updated successfully',
-    ticket: supportTickets[ticketIndex]
-  });
-});
-
-// Delete support ticket
-app.delete('/api/admin/support/tickets/:id', (req, res) => {
-  const { id } = req.params;
-  
-  const ticketIndex = supportTickets.findIndex(t => t.id === id);
-  if (ticketIndex === -1) {
-    return res.status(404).json({
-      error: 'Support ticket not found',
-      message: `Ticket with ID '${id}' does not exist`
-    });
-  }
-  
-  const deletedTicket = supportTickets.splice(ticketIndex, 1)[0];
-  
-  res.json({
-    message: 'Support ticket deleted successfully',
-    ticket: deletedTicket
-  });
-});
-
-// Add message to ticket conversation
-app.post('/api/admin/support/tickets/:id/messages', (req, res) => {
-  const { id } = req.params;
-  const { sender, message } = req.body;
-  
-  const ticketIndex = supportTickets.findIndex(t => t.id === id);
-  if (ticketIndex === -1) {
-    return res.status(404).json({
-      error: 'Support ticket not found',
-      message: `Ticket with ID '${id}' does not exist`
-    });
-  }
-  
-  const newMessage = {
-    id: `msg_${Date.now()}`,
-    sender,
-    message,
-    timestamp: new Date().toISOString()
-  };
-  
-  supportTickets[ticketIndex].conversation.push(newMessage);
-  supportTickets[ticketIndex].lastUpdated = new Date().toISOString();
-  
-  res.json({
-    message: 'Message added successfully',
-    message: newMessage
-  });
 });
 
 // ==================== BILLING & SUBSCRIPTIONS ====================
@@ -2198,255 +2037,110 @@ let subscriptions = [
 ];
 
 // Get all subscriptions
-app.get('/api/admin/billing/subscriptions', (req, res) => {
-  res.json({
-    message: 'Subscriptions retrieved successfully',
-    subscriptions
-  });
-});
-
-// Get specific subscription
-app.get('/api/admin/billing/subscriptions/:id', (req, res) => {
-  const { id } = req.params;
-  const subscription = subscriptions.find(s => s.id === id);
-  
-  if (!subscription) {
-    return res.status(404).json({
-      error: 'Subscription not found',
-      message: `Subscription with ID '${id}' does not exist`
+app.get('/api/admin/billing/subscriptions', async (req, res) => {
+  try {
+    const schools = await School.find({ status: 'Active' })
+      .select('name plan status createdAt')
+      .sort({ createdAt: -1 });
+    
+    const subscriptions = schools.map(school => ({
+      id: school._id,
+      schoolId: school._id,
+      schoolName: school.name,
+      planName: school.plan,
+      amount: school.plan === 'Premium' ? 99.99 : school.plan === 'Enterprise' ? 199.99 : 49.99,
+      billingCycle: 'monthly',
+      status: school.status,
+      nextBillingDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+      features: school.modules,
+      createdAt: school.createdAt
+    }));
+    
+    res.json({
+      message: 'Subscriptions retrieved successfully',
+      subscriptions
+    });
+  } catch (error) {
+    console.error('Error fetching subscriptions:', error);
+    res.status(500).json({
+      error: 'Failed to fetch subscriptions',
+      message: error.message
     });
   }
-  
-  res.json({
-    message: 'Subscription retrieved successfully',
-    subscription
-  });
 });
 
-// Create new subscription
-app.post('/api/admin/billing/subscriptions', (req, res) => {
-  const { schoolId, schoolName, planName, amount, billingCycle, features } = req.body;
-  
-  const newSubscription = {
-    id: `sub_${Date.now()}`,
-    schoolId,
-    schoolName,
-    planName,
-    amount,
-    billingCycle: billingCycle || 'monthly',
-    status: 'active',
-    nextBillingDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), // 30 days from now
-    features: features || ['attendance', 'fees', 'academics'],
-    createdAt: new Date().toISOString()
-  };
-  
-  subscriptions.push(newSubscription);
-  
-  res.status(201).json({
-    message: 'Subscription created successfully',
-    subscription: newSubscription
-  });
-});
+// ==================== FEATURE TOGGLES ====================
 
-// Update subscription
-app.put('/api/admin/billing/subscriptions/:id', (req, res) => {
-  const { id } = req.params;
-  const updates = req.body;
-  
-  const subscriptionIndex = subscriptions.findIndex(s => s.id === id);
-  if (subscriptionIndex === -1) {
-    return res.status(404).json({
-      error: 'Subscription not found',
-      message: `Subscription with ID '${id}' does not exist`
+// Get all feature toggles
+app.get('/api/admin/features', async (req, res) => {
+  try {
+    // For now, return empty array as feature toggles are not implemented in DB
+    res.json({
+      message: 'Feature toggles retrieved successfully',
+      featureToggles: []
+    });
+  } catch (error) {
+    console.error('Error fetching feature toggles:', error);
+    res.status(500).json({
+      error: 'Failed to fetch feature toggles',
+      message: error.message
     });
   }
-  
-  subscriptions[subscriptionIndex] = {
-    ...subscriptions[subscriptionIndex],
-    ...updates
-  };
-  
-  res.json({
-    message: 'Subscription updated successfully',
-    subscription: subscriptions[subscriptionIndex]
-  });
 });
 
-// Cancel subscription
-app.post('/api/admin/billing/subscriptions/:id/cancel', (req, res) => {
-  const { id } = req.params;
-  
-  const subscriptionIndex = subscriptions.findIndex(s => s.id === id);
-  if (subscriptionIndex === -1) {
-    return res.status(404).json({
-      error: 'Subscription not found',
-      message: `Subscription with ID '${id}' does not exist`
+// Get AB tests
+app.get('/api/admin/features/ab-tests', async (req, res) => {
+  try {
+    // For now, return empty array as AB tests are not implemented in DB
+    res.json({
+      message: 'AB tests retrieved successfully',
+      abTests: []
+    });
+  } catch (error) {
+    console.error('Error fetching AB tests:', error);
+    res.status(500).json({
+      error: 'Failed to fetch AB tests',
+      message: error.message
     });
   }
-  
-  subscriptions[subscriptionIndex].status = 'cancelled';
-  
-  res.json({
-    message: 'Subscription cancelled successfully',
-    subscription: subscriptions[subscriptionIndex]
-  });
 });
 
-// ==================== FEATURE TOGGLES & AB TESTS ====================
+// ==================== SUBDOMAIN MANAGEMENT ====================
 
-let abTests = [
-  {
-    id: '1',
-    name: 'New Dashboard Layout',
-    description: 'Testing new dashboard design',
-    status: 'active',
-    variantA: 'Current Layout',
-    variantB: 'New Layout',
-    trafficSplit: 50,
-    metrics: {
-      variantA: { impressions: 1000, conversions: 150, conversionRate: 15.0 },
-      variantB: { impressions: 1000, conversions: 180, conversionRate: 18.0 }
-    },
-    startDate: '2024-07-01T00:00:00Z',
-    endDate: '2024-07-31T00:00:00Z',
-    createdAt: '2024-07-01T00:00:00Z'
-  },
-  {
-    id: '2',
-    name: 'Payment Flow Optimization',
-    description: 'Testing streamlined payment process',
-    status: 'active',
-    variantA: 'Standard Flow',
-    variantB: 'Optimized Flow',
-    trafficSplit: 30,
-    metrics: {
-      variantA: { impressions: 800, conversions: 120, conversionRate: 15.0 },
-      variantB: { impressions: 800, conversions: 140, conversionRate: 17.5 }
-    },
-    startDate: '2024-07-15T00:00:00Z',
-    endDate: '2024-08-15T00:00:00Z',
-    createdAt: '2024-07-15T00:00:00Z'
-  }
-];
-
-// Get all AB tests
-app.get('/api/admin/features/ab-tests', (req, res) => {
-  res.json({
-    message: 'AB tests retrieved successfully',
-    abTests
-  });
-});
-
-// Get specific AB test
-app.get('/api/admin/features/ab-tests/:id', (req, res) => {
-  const { id } = req.params;
-  const abTest = abTests.find(t => t.id === id);
-  
-  if (!abTest) {
-    return res.status(404).json({
-      error: 'AB test not found',
-      message: `AB test with ID '${id}' does not exist`
+// Get all subdomains
+app.get('/api/admin/subdomains', async (req, res) => {
+  try {
+    const schools = await School.find({ subdomain: { $exists: true, $ne: '' } });
+    
+    const subdomains = schools.map(school => ({
+      id: school._id,
+      schoolId: school._id,
+      schoolName: school.name,
+      subdomain: school.subdomain,
+      fullDomain: `${school.subdomain}.jafasol.com`,
+      url: `https://${school.subdomain}.jafasol.com`,
+      sslStatus: 'active',
+      serverStatus: 'online',
+      dnsRecords: [
+        { type: 'A', name: `${school.subdomain}.jafasol.com`, value: '192.168.1.100' },
+        { type: 'CNAME', name: `www.${school.subdomain}.jafasol.com`, value: `${school.subdomain}.jafasol.com` }
+      ],
+      createdAt: school.createdAt,
+      lastChecked: new Date().toISOString(),
+      isActive: true
+    }));
+    
+    res.json({
+      message: 'Subdomains retrieved successfully',
+      subdomains
+    });
+  } catch (error) {
+    console.error('Error fetching subdomains:', error);
+    res.status(500).json({
+      error: 'Failed to fetch subdomains',
+      message: error.message
     });
   }
-  
-  res.json({
-    message: 'AB test retrieved successfully',
-    abTest
-  });
-});
-
-// Create new AB test
-app.post('/api/admin/features/ab-tests', (req, res) => {
-  const { name, description, variantA, variantB, trafficSplit, startDate, endDate } = req.body;
-  
-  const newABTest = {
-    id: `abtest_${Date.now()}`,
-    name,
-    description,
-    status: 'active',
-    variantA,
-    variantB,
-    trafficSplit: trafficSplit || 50,
-    metrics: {
-      variantA: { impressions: 0, conversions: 0, conversionRate: 0 },
-      variantB: { impressions: 0, conversions: 0, conversionRate: 0 }
-    },
-    startDate: startDate || new Date().toISOString(),
-    endDate: endDate || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-    createdAt: new Date().toISOString()
-  };
-  
-  abTests.push(newABTest);
-  
-  res.status(201).json({
-    message: 'AB test created successfully',
-    abTest: newABTest
-  });
-});
-
-// Update AB test
-app.put('/api/admin/features/ab-tests/:id', (req, res) => {
-  const { id } = req.params;
-  const updates = req.body;
-  
-  const abTestIndex = abTests.findIndex(t => t.id === id);
-  if (abTestIndex === -1) {
-    return res.status(404).json({
-      error: 'AB test not found',
-      message: `AB test with ID '${id}' does not exist`
-    });
-  }
-  
-  abTests[abTestIndex] = {
-    ...abTests[abTestIndex],
-    ...updates
-  };
-  
-  res.json({
-    message: 'AB test updated successfully',
-    abTest: abTests[abTestIndex]
-  });
-});
-
-// Update AB test metrics
-app.put('/api/admin/features/ab-tests/:id/metrics', (req, res) => {
-  const { id } = req.params;
-  const { metrics } = req.body;
-  
-  const abTestIndex = abTests.findIndex(t => t.id === id);
-  if (abTestIndex === -1) {
-    return res.status(404).json({
-      error: 'AB test not found',
-      message: `AB test with ID '${id}' does not exist`
-    });
-  }
-  
-  abTests[abTestIndex].metrics = metrics;
-  
-  res.json({
-    message: 'AB test metrics updated successfully',
-    abTest: abTests[abTestIndex]
-  });
-});
-
-// Delete AB test
-app.delete('/api/admin/features/ab-tests/:id', (req, res) => {
-  const { id } = req.params;
-  
-  const abTestIndex = abTests.findIndex(t => t.id === id);
-  if (abTestIndex === -1) {
-    return res.status(404).json({
-      error: 'AB test not found',
-      message: `AB test with ID '${id}' does not exist`
-    });
-  }
-  
-  const deletedABTest = abTests.splice(abTestIndex, 1)[0];
-  
-  res.json({
-    message: 'AB test deleted successfully',
-    abTest: deletedABTest
-  });
 });
 
 // 404 handler
