@@ -59,6 +59,11 @@ const userSchema = new mongoose.Schema({
   passwordResetExpires: {
     type: Date,
     default: null
+  },
+  schoolSubdomain: {
+    type: String,
+    default: null,
+    trim: true
   }
 }, {
   timestamps: true,

@@ -465,7 +465,7 @@ app.post('/api/admin/schools', authenticateToken, requireAdmin, async (req, res)
       password: adminPassword,
       roleId: adminRole._id,
       status: 'Active',
-      schoolSubdomain: subdomain
+      schoolSubdomain: `${subdomain}.jafasol.com`
     });
 
     await adminUser.save();
@@ -492,7 +492,7 @@ app.post('/api/admin/schools', authenticateToken, requireAdmin, async (req, res)
       password: adminPassword,
       roleId: adminRole._id,
       status: 'Active',
-      schoolSubdomain: subdomain
+      schoolSubdomain: `${subdomain}.jafasol.com`
     });
 
     await schoolAdminUser.save();
