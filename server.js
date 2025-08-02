@@ -456,8 +456,25 @@ app.get('/api/admin/subdomains', authenticateToken, requireAdmin, async (req, re
   }
 });
 
-// Check subdomain availability
-app.post('/api/admin/subdomains/check', authenticateToken, requireAdmin, async (req, res) => {
+
+
+app.get('/api/admin/subdomains/templates', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    res.json({
+      message: 'Subdomain templates retrieved successfully',
+      templates: [
+        { name: 'school-name', example: 'stmarys' },
+        { name: 'academy-name', example: 'academy' },
+        { name: 'institution-name', example: 'institute' }
+      ]
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch subdomain templates' });
+  }
+});
+
+// Public subdomain check endpoint (no authentication required)
+app.post('/api/admin/subdomains/check', async (req, res) => {
   try {
     const { subdomain } = req.body;
 
@@ -496,18 +513,45 @@ app.post('/api/admin/subdomains/check', authenticateToken, requireAdmin, async (
   }
 });
 
-app.get('/api/admin/subdomains/templates', authenticateToken, requireAdmin, async (req, res) => {
+// Missing admin endpoints
+app.get('/api/admin/support/tickets', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    res.json({
-      message: 'Subdomain templates retrieved successfully',
-      templates: [
-        { name: 'school-name', example: 'stmarys' },
-        { name: 'academy-name', example: 'academy' },
-        { name: 'institution-name', example: 'institute' }
-      ]
+    res.json({ 
+      message: 'Support tickets retrieved successfully', 
+      tickets: [] 
     });
   } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch subdomain templates' });
+    res.status(500).json({ error: 'Failed to fetch support tickets' });
+  }
+});
+
+app.get('/api/admin/backups', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    res.json({ 
+      message: 'Backups retrieved successfully', 
+      backups: [] 
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch backups' });
+  }
+});
+
+app.get('/api/admin/settings', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    res.json({ 
+      message: 'Settings retrieved successfully', 
+      settings: {
+        systemName: 'Jafasol School Management System',
+        version: '1.0.0',
+        maintenanceMode: false,
+        emailNotifications: true,
+        smsNotifications: false,
+        backupFrequency: 'daily',
+        maxFileUploadSize: '10MB'
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch settings' });
   }
 });
 
