@@ -154,6 +154,10 @@ app.use((req, res, next) => {
 // Add tenant middleware
 app.use(handleTenant);
 
+// Import and register AI routes
+const aiRoutes = require('./routes/ai');
+app.use('/api/ai', aiRoutes);
+
 // Serve static files
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 

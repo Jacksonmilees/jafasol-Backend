@@ -422,6 +422,64 @@ router.post('/optimize-fees', [
   }
 });
 
+// AI Chat endpoint
+router.post('/chat', [
+  body('message').isString().notEmpty(),
+  body('context').optional().isObject(),
+  body('history').optional().isArray()
+], requirePermission('AI Features', 'use'), async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        error: 'Validation Error',
+        message: 'Please provide a valid message',
+        details: errors.array()
+      });
+    }
+
+    const { message, context = {}, history = [] } = req.body;
+
+    // Mock AI chat response
+    const aiResponse = {
+      message: `I understand you're asking about: "${message}". Here's my response based on the school management context.`,
+      suggestions: [
+        'How can I help you with student management?',
+        'Would you like to generate a report?',
+        'I can help you with timetable optimization',
+        'Need assistance with fee collection analysis?'
+      ],
+      context: {
+        userRole: req.user.role,
+        schoolId: req.user.schoolId,
+        timestamp: new Date().toISOString()
+      },
+      confidence: 0.85
+    };
+
+    // Create audit log
+    await createAuditLog(req.user.id, 'AI Chat Used', { 
+      type: 'AI Feature', 
+      feature: 'Chat',
+      messageLength: message.length,
+      context: Object.keys(context).length
+    }, `Chat initiated by ${req.user.name}`);
+
+    res.json({
+      message: 'AI chat response generated successfully',
+      response: aiResponse,
+      generatedAt: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('AI chat error:', error);
+    res.status(500).json({
+      error: 'Failed to process chat message',
+      message: 'An error occurred while processing your message'
+    });
+  }
+});
+
 // Get AI feature status
 router.get('/status', async (req, res) => {
   try {
