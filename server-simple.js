@@ -16,6 +16,7 @@ const Role = require('./models/Role');
 const AuditLog = require('./models/AuditLog');
 
 const { connectDB } = require('./config/database');
+const multiTenantManager = require('./config/multiTenant');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -761,41 +762,175 @@ app.post('/api/auth/login', async (req, res) => {
       });
     }
 
-    // For demo purposes, allow admin login
-    if (email === 'admin@jafasol.com' && password === 'password') {
-      const user = {
-        id: 'admin-001',
-        email: 'admin@jafasol.com',
-        name: 'Super Admin',
-        role: 'SuperAdmin'
-      };
+    // Get system connection for admin login
+    const systemConnection = await multiTenantManager.getDefaultConnection();
+    const User = systemConnection.model('User');
+    const Role = systemConnection.model('Role');
 
-      const token = jwt.sign(user, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
-
-      // Log the login
-      await AuditLog.create({
-        userId: user.id,
-        action: 'LOGIN',
-        resource: 'AUTH',
-        details: `User ${user.email} logged in successfully`,
-        ipAddress: req.ip,
-        userAgent: req.get('User-Agent')
-      });
-
-      res.json({
-        message: 'Login successful',
-        token,
-        user,
-        expiresIn: JWT_EXPIRES_IN
-      });
-    } else {
-      res.status(401).json({
+    // Find user by email
+    const user = await User.findOne({ email: email.toLowerCase() }).populate('roleId');
+    
+    if (!user) {
+      return res.status(401).json({
         error: 'Invalid credentials',
         message: 'Email or password is incorrect'
       });
     }
+
+    // Check if user is active
+    if (user.status !== 'Active') {
+      return res.status(401).json({
+        error: 'Account inactive',
+        message: 'Your account is not active. Please contact administrator.'
+      });
+    }
+
+    // Verify password
+    const isPasswordValid = await user.comparePassword(password);
+    if (!isPasswordValid) {
+      return res.status(401).json({
+        error: 'Invalid credentials',
+        message: 'Email or password is incorrect'
+      });
+    }
+
+    // Update last login
+    user.lastLoginAt = new Date();
+    await user.save();
+
+    // Create JWT token
+    const token = jwt.sign(
+      { 
+        userId: user._id, 
+        email: user.email, 
+        role: user.roleId?.name,
+        name: user.name 
+      }, 
+      JWT_SECRET, 
+      { expiresIn: JWT_EXPIRES_IN }
+    );
+
+    // Log the login
+    await AuditLog.create({
+      userId: user._id,
+      action: 'LOGIN',
+      resource: 'AUTH',
+      details: `User ${user.email} logged in successfully`,
+      ipAddress: req.ip,
+      userAgent: req.get('User-Agent')
+    });
+
+    res.json({
+      message: 'Login successful',
+      token,
+      user: {
+        id: user._id,
+        email: user.email,
+        name: user.name,
+        role: user.roleId?.name,
+        avatarUrl: user.avatarUrl,
+        lastLoginAt: user.lastLoginAt
+      },
+      expiresIn: JWT_EXPIRES_IN
+    });
   } catch (error) {
     console.error('Login error:', error);
+    res.status(500).json({
+      error: 'Login failed',
+      message: error.message
+    });
+  }
+});
+
+// Tenant-specific login endpoint
+app.post('/api/tenant/auth/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({
+        error: 'Missing credentials',
+        message: 'Email and password are required'
+      });
+    }
+
+    // Get tenant from request
+    const tenantId = req.tenantId;
+    if (!tenantId) {
+      return res.status(400).json({
+        error: 'Tenant context required',
+        message: 'Please access this endpoint through a school subdomain'
+      });
+    }
+
+    // Get tenant connection
+    const tenantConnection = await multiTenantManager.getTenantConnection(tenantId);
+    const User = tenantConnection.model('User');
+    const Role = tenantConnection.model('Role');
+
+    // Find user by email
+    const user = await User.findOne({ email: email.toLowerCase() }).populate('roleId');
+    
+    if (!user) {
+      return res.status(401).json({
+        error: 'Invalid credentials',
+        message: 'Email or password is incorrect'
+      });
+    }
+
+    // Check if user is active
+    if (user.status !== 'Active') {
+      return res.status(401).json({
+        error: 'Account inactive',
+        message: 'Your account is not active. Please contact administrator.'
+      });
+    }
+
+    // Verify password
+    const isPasswordValid = await user.comparePassword(password);
+    if (!isPasswordValid) {
+      return res.status(401).json({
+        error: 'Invalid credentials',
+        message: 'Email or password is incorrect'
+      });
+    }
+
+    // Update last login
+    user.lastLoginAt = new Date();
+    await user.save();
+
+    // Create JWT token with tenant context
+    const token = jwt.sign(
+      { 
+        userId: user._id, 
+        email: user.email, 
+        role: user.roleId?.name,
+        name: user.name,
+        tenantId: tenantId
+      }, 
+      JWT_SECRET, 
+      { expiresIn: JWT_EXPIRES_IN }
+    );
+
+    res.json({
+      message: 'Login successful',
+      token,
+      user: {
+        id: user._id,
+        email: user.email,
+        name: user.name,
+        role: user.roleId?.name,
+        avatarUrl: user.avatarUrl,
+        lastLoginAt: user.lastLoginAt
+      },
+      tenant: {
+        id: tenantId,
+        name: req.tenantInfo?.name
+      },
+      expiresIn: JWT_EXPIRES_IN
+    });
+  } catch (error) {
+    console.error('Tenant login error:', error);
     res.status(500).json({
       error: 'Login failed',
       message: error.message
@@ -1297,7 +1432,241 @@ function generateUniqueSubdomain(schoolName) {
   return subdomain;
 }
 
-// Create subdomain automatically when school is created
+// Enhanced school creation with tenant setup
+app.post('/api/admin/schools/create', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { 
+      name, 
+      email, 
+      phone, 
+      address, 
+      subscriptionPlan,
+      timezone,
+      language,
+      academicYear,
+      adminEmail,
+      adminPassword,
+      adminName
+    } = req.body;
+
+    // Validate required fields
+    if (!name || !email || !adminEmail || !adminPassword) {
+      return res.status(400).json({
+        error: 'Missing required fields',
+        message: 'School name, email, admin email, and admin password are required'
+      });
+    }
+
+    // Generate unique tenant ID
+    const tenantId = `school_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    
+    // Generate subdomain
+    const subdomain = generateUniqueSubdomain(name);
+    
+    // Create tenant
+    const tenant = await multiTenantManager.createTenant(tenantId, {
+      name: name,
+      domain: `${subdomain}.jafasol.com`,
+      contactEmail: email,
+      contactPhone: phone,
+      subscriptionPlan: subscriptionPlan || 'Basic',
+      settings: {
+        timezone: timezone || 'Africa/Nairobi',
+        language: language || 'en',
+        academicYear: academicYear || '2024-2025',
+        address: address
+      }
+    });
+
+    // Initialize school data
+    await initializeSchoolData(tenantId, {
+      name,
+      email,
+      phone,
+      address,
+      timezone,
+      language,
+      academicYear
+    });
+
+    // Create school admin user
+    const tenantConnection = await multiTenantManager.getTenantConnection(tenantId);
+    const User = tenantConnection.model('User');
+    const Role = tenantConnection.model('Role');
+
+    // Create roles for the school
+    const schoolRoles = [
+      { name: 'Admin', description: 'School administrator', permissions: ['*'] },
+      { name: 'Teacher', description: 'School teacher', permissions: ['class_management', 'attendance', 'grades'] },
+      { name: 'Student', description: 'School student', permissions: ['view_grades', 'view_schedule'] },
+      { name: 'Parent', description: 'Student parent', permissions: ['view_child_grades', 'view_child_attendance'] }
+    ];
+
+    await Role.insertMany(schoolRoles);
+    const adminRole = await Role.findOne({ name: 'Admin' });
+
+    // Create admin user
+    const adminUser = new User({
+      name: adminName || 'School Administrator',
+      email: adminEmail,
+      password: adminPassword,
+      roleId: adminRole._id,
+      status: 'Active',
+      avatarUrl: `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=0D9488&color=fff`
+    });
+
+    await adminUser.save();
+
+    // Create school record in system database
+    const systemConnection = await multiTenantManager.getDefaultConnection();
+    const School = systemConnection.model('School');
+    
+    const school = new School({
+      tenantId: tenantId,
+      name: name,
+      email: email,
+      phone: phone,
+      address: address,
+      subdomain: subdomain,
+      subscriptionPlan: subscriptionPlan || 'Basic',
+      status: 'Active',
+      adminEmail: adminEmail,
+      adminName: adminName || 'School Administrator',
+      settings: {
+        timezone: timezone || 'Africa/Nairobi',
+        language: language || 'en',
+        academicYear: academicYear || '2024-2025'
+      },
+      createdAt: new Date()
+    });
+
+    await school.save();
+
+    // Create subdomain configuration
+    const subdomainConfig = {
+      id: `subdomain_${Date.now()}`,
+      schoolId: school._id,
+      schoolName: name,
+      subdomain: subdomain,
+      fullDomain: `${subdomain}.jafasol.com`,
+      url: `https://${subdomain}.jafasol.com`,
+      sslStatus: 'pending',
+      serverStatus: 'active',
+      dnsRecords: [
+        { type: 'A', name: `${subdomain}.jafasol.com`, value: '102.207.191.38' },
+        { type: 'CNAME', name: `www.${subdomain}.jafasol.com`, value: `${subdomain}.jafasol.com` }
+      ],
+      createdAt: new Date().toISOString(),
+      lastChecked: new Date().toISOString(),
+      isActive: true
+    };
+
+    res.status(201).json({
+      message: 'School created successfully with tenant and subdomain',
+      school: {
+        id: school._id,
+        name: school.name,
+        email: school.email,
+        subdomain: school.subdomain,
+        tenantId: school.tenantId,
+        status: school.status,
+        adminEmail: school.adminEmail
+      },
+      subdomain: subdomainConfig,
+      adminCredentials: {
+        email: adminEmail,
+        password: adminPassword,
+        loginUrl: `https://${subdomain}.jafasol.com/admin`
+      }
+    });
+
+  } catch (error) {
+    console.error('School creation error:', error);
+    res.status(500).json({
+      error: 'School creation failed',
+      message: error.message
+    });
+  }
+});
+
+// Initialize school data function
+async function initializeSchoolData(tenantId, schoolData) {
+  const connection = await multiTenantManager.getTenantConnection(tenantId);
+  
+  // Create school-specific models
+  const studentSchema = new mongoose.Schema({
+    name: { type: String, required: true },
+    email: { type: String, required: true, unique: true },
+    studentId: { type: String, required: true, unique: true },
+    class: String,
+    section: String,
+    parentPhone: String,
+    status: { type: String, default: 'Active' },
+    createdAt: { type: Date, default: Date.now }
+  });
+
+  const teacherSchema = new mongoose.Schema({
+    name: { type: String, required: true },
+    email: { type: String, required: true, unique: true },
+    phone: String,
+    subjects: [String],
+    status: { type: String, default: 'Active' },
+    createdAt: { type: Date, default: Date.now }
+  });
+
+  const classSchema = new mongoose.Schema({
+    name: { type: String, required: true },
+    section: String,
+    teacherId: { type: mongoose.Schema.Types.ObjectId, ref: 'Teacher' },
+    subjects: [String],
+    academicYear: String,
+    createdAt: { type: Date, default: Date.now }
+  });
+
+  const subjectSchema = new mongoose.Schema({
+    name: { type: String, required: true },
+    code: { type: String, required: true, unique: true },
+    description: String,
+    credits: Number,
+    status: { type: String, default: 'Active' },
+    createdAt: { type: Date, default: Date.now }
+  });
+
+  // Create models
+  const Student = connection.model('Student', studentSchema);
+  const Teacher = connection.model('Teacher', teacherSchema);
+  const Class = connection.model('Class', classSchema);
+  const Subject = connection.model('Subject', subjectSchema);
+
+  // Add sample data
+  const sampleStudents = [
+    { name: 'John Doe', email: `john@${schoolData.name.toLowerCase().replace(/\s+/g, '')}.com`, studentId: 'ST001', class: '10', section: 'A' },
+    { name: 'Jane Smith', email: `jane@${schoolData.name.toLowerCase().replace(/\s+/g, '')}.com`, studentId: 'ST002', class: '10', section: 'A' },
+    { name: 'Mike Johnson', email: `mike@${schoolData.name.toLowerCase().replace(/\s+/g, '')}.com`, studentId: 'ST003', class: '11', section: 'B' }
+  ];
+
+  const sampleTeachers = [
+    { name: 'Mr. Johnson', email: `johnson@${schoolData.name.toLowerCase().replace(/\s+/g, '')}.com`, subjects: ['Mathematics', 'Physics'] },
+    { name: 'Ms. Williams', email: `williams@${schoolData.name.toLowerCase().replace(/\s+/g, '')}.com`, subjects: ['English', 'Literature'] },
+    { name: 'Mr. Davis', email: `davis@${schoolData.name.toLowerCase().replace(/\s+/g, '')}.com`, subjects: ['Chemistry', 'Biology'] }
+  ];
+
+  const sampleSubjects = [
+    { name: 'Mathematics', code: 'MATH101', description: 'Advanced Mathematics', credits: 4 },
+    { name: 'English', code: 'ENG101', description: 'English Language and Literature', credits: 3 },
+    { name: 'Physics', code: 'PHY101', description: 'Physics Fundamentals', credits: 4 },
+    { name: 'Chemistry', code: 'CHE101', description: 'Chemistry Basics', credits: 4 },
+    { name: 'Biology', code: 'BIO101', description: 'Biology Introduction', credits: 3 }
+  ];
+
+  await Student.insertMany(sampleStudents);
+  await Teacher.insertMany(sampleTeachers);
+  await Subject.insertMany(sampleSubjects);
+
+  console.log(`✅ Initialized school data for tenant: ${tenantId}`);
+}
+
+// Legacy school creation endpoint (for backward compatibility)
 app.post('/api/admin/schools', (req, res) => {
   const { name, email, phone, plan, status, modules } = req.body;
   
