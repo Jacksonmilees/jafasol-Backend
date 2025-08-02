@@ -382,12 +382,28 @@ app.post('/api/admin/schools', authenticateToken, requireAdmin, async (req, res)
     const SchoolTeacher = schoolConnection.model('Teacher', require('./models/Teacher').schema);
     const SchoolSchool = schoolConnection.model('School', require('./models/School').schema);
 
+    // Find or create Admin role
+    let adminRole = await Role.findOne({ name: 'Admin' });
+    if (!adminRole) {
+      adminRole = new Role({
+        name: 'Admin',
+        description: 'Administrator with full system access',
+        permissions: {
+          'dashboard': ['read', 'write'],
+          'schools': ['read', 'write', 'delete'],
+          'users': ['read', 'write', 'delete'],
+          'settings': ['read', 'write']
+        }
+      });
+      await adminRole.save();
+    }
+
     // Create admin user for the school in the main database
     const adminUser = new User({
       name: `${name} Administrator`,
       email: adminUsername,
       password: adminPassword,
-      role: 'Admin',
+      roleId: adminRole._id,
       status: 'Active',
       schoolSubdomain: subdomain
     });
@@ -414,7 +430,7 @@ app.post('/api/admin/schools', authenticateToken, requireAdmin, async (req, res)
       name: `${name} Administrator`,
       email: adminUsername,
       password: adminPassword,
-      role: 'Admin',
+      roleId: adminRole._id,
       status: 'Active',
       schoolSubdomain: subdomain
     });
