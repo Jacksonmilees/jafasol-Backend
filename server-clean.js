@@ -285,13 +285,19 @@ app.get('/api/dashboard', authenticateToken, async (req, res) => {
       const totalUsers = await User.countDocuments();
       const activeUsers = await User.countDocuments({ status: 'Active' });
       
+      // Count schools (admin users with schoolSubdomain)
+      const totalSchools = await User.countDocuments({ 
+        schoolSubdomain: { $exists: true, $ne: null },
+        email: { $regex: /^admin@.*\.jafasol\.com$/ }
+      });
+      
       // Calculate system health based on real metrics
       const systemHealth = totalUsers > 0 ? 'Operational' : 'Initializing';
       const uptime = process.uptime();
       const responseTime = Date.now() - req.startTime || 0;
       
       const stats = {
-        totalSchools: 0, // Will be populated when School model is available
+        totalSchools: totalSchools,
         activeSubscriptions: 0, // Will be populated when Subscription model is available
         pendingSchools: 0,
         suspendedSchools: 0,
@@ -325,10 +331,53 @@ app.get('/api/dashboard', authenticateToken, async (req, res) => {
 // Admin endpoints
 app.get('/api/admin/schools', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    // For now, return empty array since School model is not implemented yet
-    // This will be populated when School model is available
-    res.json({ message: 'Schools retrieved successfully', schools: [] });
+    // Find all admin users that represent schools (they have schoolSubdomain)
+    const schoolAdmins = await User.find({ 
+      schoolSubdomain: { $exists: true, $ne: null },
+      email: { $regex: /^admin@.*\.jafasol\.com$/ }
+    }).populate('roleId');
+
+    // Transform admin users into school objects
+    const schools = await Promise.all(schoolAdmins.map(async (admin) => {
+      // Try to get additional school details from school-specific database
+      let schoolDetails = null;
+      try {
+        const schoolDbName = `school_${admin.schoolSubdomain}`;
+        const schoolConnection = mongoose.createConnection(
+          process.env.MONGODB_URI.replace('/jafasol?', `/${schoolDbName}?`),
+          { useNewUrlParser: true, useUnifiedTopology: true }
+        );
+        const SchoolModel = schoolConnection.model('School', require('./models/School').schema);
+        schoolDetails = await SchoolModel.findOne({ adminUserId: admin._id });
+        schoolConnection.close();
+      } catch (error) {
+        console.log(`Could not fetch details for school ${admin.schoolSubdomain}:`, error.message);
+      }
+
+      return {
+        id: admin._id,
+        name: schoolDetails?.name || admin.name.replace(' Administrator', ''),
+        email: schoolDetails?.email || admin.email.replace('admin@', '').replace('.jafasol.com', ''),
+        phone: schoolDetails?.phone || admin.phone || '',
+        logoUrl: `https://picsum.photos/seed/${admin._id}/40/40`,
+        plan: schoolDetails?.plan || 'Basic',
+        status: schoolDetails?.status || admin.status || 'Active',
+        subdomain: admin.schoolSubdomain,
+        storageUsage: 0, // Default storage
+        createdAt: admin.createdAt ? admin.createdAt.toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+        modules: schoolDetails?.modules || [],
+        adminUserId: admin._id
+      };
+    }));
+
+    console.log(`Found ${schools.length} schools in database`);
+    
+    res.json({ 
+      message: 'Schools retrieved successfully', 
+      schools: schools 
+    });
   } catch (error) {
+    console.error('Error fetching schools:', error);
     res.status(500).json({ error: 'Failed to fetch schools' });
   }
 });
@@ -362,6 +411,17 @@ app.post('/api/admin/schools', authenticateToken, requireAdmin, async (req, res)
       return res.status(409).json({
         error: 'Subdomain already exists',
         message: 'This subdomain is already taken. Please choose a different one.'
+      });
+    }
+
+    // Check if admin user already exists for this subdomain
+    const checkAdminUsername = `admin@${subdomain}.jafasol.com`;
+    const existingAdmin = await User.findOne({ email: checkAdminUsername });
+    
+    if (existingAdmin) {
+      return res.status(409).json({
+        error: 'Subdomain already exists',
+        message: `A school with subdomain "${subdomain}" already exists. Please choose a different subdomain.`
       });
     }
 
@@ -589,12 +649,35 @@ app.post('/api/admin/subdomains/check', async (req, res) => {
       'gam', 'anon', 'gam', 'anon', 'gam', 'anon', 'gam', 'anon', 'gam', 'anon'
     ];
     
-    const isAvailable = !reservedSubdomains.includes(subdomain.toLowerCase());
+    const isReserved = reservedSubdomains.includes(subdomain.toLowerCase());
+    
+    if (isReserved) {
+      return res.json({
+        message: 'Subdomain is not available',
+        subdomain,
+        available: false,
+        fullDomain: `${subdomain}.jafasol.com`
+      });
+    }
+
+    // Check if admin user already exists for this subdomain
+    const adminUsername = `admin@${subdomain}.jafasol.com`;
+    const existingAdmin = await User.findOne({ email: adminUsername });
+    
+    if (existingAdmin) {
+      return res.json({
+        message: 'Subdomain is not available',
+        subdomain,
+        available: false,
+        fullDomain: `${subdomain}.jafasol.com`,
+        reason: 'A school with this subdomain already exists'
+      });
+    }
 
     res.json({
-      message: isAvailable ? 'Subdomain is available' : 'Subdomain is not available',
+      message: 'Subdomain is available',
       subdomain,
-      available: isAvailable,
+      available: true,
       fullDomain: `${subdomain}.jafasol.com`
     });
   } catch (error) {
@@ -680,6 +763,32 @@ app.get('/api/admin/users', authenticateToken, requireAdmin, async (req, res) =>
     res.json({ message: 'Users retrieved successfully', users });
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch users' });
+  }
+});
+
+// Debug endpoint to check school admin users
+app.get('/api/admin/debug/schools', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const schoolAdmins = await User.find({ 
+      schoolSubdomain: { $exists: true, $ne: null },
+      email: { $regex: /^admin@.*\.jafasol\.com$/ }
+    }).select('-password');
+    
+    res.json({ 
+      message: 'School admin users found', 
+      count: schoolAdmins.length,
+      schools: schoolAdmins.map(admin => ({
+        id: admin._id,
+        name: admin.name,
+        email: admin.email,
+        schoolSubdomain: admin.schoolSubdomain,
+        status: admin.status,
+        createdAt: admin.createdAt
+      }))
+    });
+  } catch (error) {
+    console.error('Error in debug endpoint:', error);
+    res.status(500).json({ error: 'Failed to fetch debug info' });
   }
 });
 
