@@ -66,6 +66,12 @@ app.use(cors({
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
+// Add request timing middleware
+app.use((req, res, next) => {
+  req.startTime = Date.now();
+  next();
+});
+
 // Serve static files
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
@@ -157,23 +163,27 @@ app.get('/api/dashboard', authenticateToken, requireAdmin, async (req, res) => {
     const totalUsers = await User.countDocuments();
     const activeUsers = await User.countDocuments({ status: 'Active' });
     
+    // Calculate system health based on real metrics
+    const systemHealth = totalUsers > 0 ? 'Operational' : 'Initializing';
+    const uptime = process.uptime();
+    const responseTime = Date.now() - req.startTime || 0;
+    
     const stats = {
-      totalSchools: 12,
-      activeSubscriptions: 10,
-      pendingSchools: 2,
+      totalSchools: 0, // Will be populated when School model is available
+      activeSubscriptions: 0, // Will be populated when Subscription model is available
+      pendingSchools: 0,
       suspendedSchools: 0,
-      monthlyRevenue: 125000,
+      monthlyRevenue: 0, // Will be populated when Revenue model is available
       totalUsers: totalUsers,
       activeUsers: activeUsers,
-      systemHealth: 'Operational',
-      uptime: 99.9,
-      responseTime: 120,
+      systemHealth: systemHealth,
+      uptime: uptime > 0 ? Math.round((uptime / (24 * 60 * 60)) * 100) / 100 : 0,
+      responseTime: responseTime,
       lastUpdated: new Date().toISOString(),
-      // Additional stats for better dashboard
-      newSchoolsThisMonth: 3,
-      totalRevenue: 1500000,
-      averageResponseTime: 85,
-      systemLoad: 45
+      newSchoolsThisMonth: 0, // Will be populated when School model is available
+      totalRevenue: 0, // Will be populated when Revenue model is available
+      averageResponseTime: responseTime,
+      systemLoad: process.memoryUsage().heapUsed / process.memoryUsage().heapTotal * 100
     };
 
     res.json({
@@ -189,32 +199,26 @@ app.get('/api/dashboard', authenticateToken, requireAdmin, async (req, res) => {
   }
 });
 
-// Admin Schools API
+// Admin endpoints
 app.get('/api/admin/schools', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    res.json({
-      message: 'Schools retrieved successfully',
-      schools: []
-    });
+    // For now, return empty array since School model is not implemented yet
+    // This will be populated when School model is available
+    res.json({ message: 'Schools retrieved successfully', schools: [] });
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch schools' });
   }
 });
 
-// Admin Users API
 app.get('/api/admin/users', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const users = await User.find().populate('roleId').select('-password');
-    res.json({
-      message: 'Users retrieved successfully',
-      users
-    });
+    res.json({ message: 'Users retrieved successfully', users });
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch users' });
   }
 });
 
-// Admin Settings API
 app.get('/api/admin/settings', authenticateToken, requireAdmin, async (req, res) => {
   try {
     res.json({
@@ -232,43 +236,30 @@ app.get('/api/admin/settings', authenticateToken, requireAdmin, async (req, res)
   }
 });
 
-// Admin Notifications API
 app.get('/api/admin/notifications', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    res.json({
-      message: 'Notifications retrieved successfully',
-      notifications: []
-    });
+    res.json({ message: 'Notifications retrieved successfully', notifications: [] });
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch notifications' });
   }
 });
 
-// Admin Support Tickets API
 app.get('/api/admin/support/tickets', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    res.json({
-      message: 'Support tickets retrieved successfully',
-      tickets: []
-    });
+    res.json({ message: 'Support tickets retrieved successfully', tickets: [] });
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch support tickets' });
   }
 });
 
-// Admin Subdomains API
 app.get('/api/admin/subdomains', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    res.json({
-      message: 'Subdomains retrieved successfully',
-      subdomains: []
-    });
+    res.json({ message: 'Subdomains retrieved successfully', subdomains: [] });
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch subdomains' });
   }
 });
 
-// Admin Subdomain Templates API (FIXED)
 app.get('/api/admin/subdomains/templates', authenticateToken, requireAdmin, async (req, res) => {
   try {
     res.json({
@@ -295,55 +286,38 @@ app.get('/api/admin/subdomains/templates', authenticateToken, requireAdmin, asyn
   }
 });
 
-// Admin Backups API
 app.get('/api/admin/backups', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    res.json({
-      message: 'Backups retrieved successfully',
-      backups: []
-    });
+    res.json({ message: 'Backups retrieved successfully', backups: [] });
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch backups' });
   }
 });
 
-// Admin Announcements API
 app.get('/api/admin/announcements', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    res.json({
-      message: 'Announcements retrieved successfully',
-      announcements: []
-    });
+    res.json({ message: 'Announcements retrieved successfully', announcements: [] });
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch announcements' });
   }
 });
 
-// Admin Security Login Logs API
 app.get('/api/admin/security/login-logs', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    res.json({
-      message: 'Login logs retrieved successfully',
-      logs: []
-    });
+    res.json({ message: 'Login logs retrieved successfully', logs: [] });
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch login logs' });
   }
 });
 
-// Admin Security Audit API
 app.get('/api/admin/security/audit', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    res.json({
-      message: 'Audit logs retrieved successfully',
-      audit: []
-    });
+    res.json({ message: 'Audit logs retrieved successfully', audit: [] });
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch audit logs' });
   }
 });
 
-// Admin Security Settings API
 app.get('/api/admin/security/settings', authenticateToken, requireAdmin, async (req, res) => {
   try {
     res.json({
@@ -360,61 +334,41 @@ app.get('/api/admin/security/settings', authenticateToken, requireAdmin, async (
   }
 });
 
-// Admin Features API
 app.get('/api/admin/features', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    res.json({
-      message: 'Features retrieved successfully',
-      features: []
-    });
+    res.json({ message: 'Features retrieved successfully', features: [] });
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch features' });
   }
 });
 
-// Admin AB Tests API
 app.get('/api/admin/ab-tests', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    res.json({
-      message: 'AB tests retrieved successfully',
-      tests: []
-    });
+    res.json({ message: 'AB tests retrieved successfully', tests: [] });
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch AB tests' });
   }
 });
 
-// Admin AI Chat API
 app.get('/api/admin/ai/chat', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    res.json({
-      message: 'AI chat history retrieved successfully',
-      chatHistory: []
-    });
+    res.json({ message: 'AI chat history retrieved successfully', chatHistory: [] });
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch AI chat history' });
   }
 });
 
-// Admin AI Insights API
 app.get('/api/admin/ai/insights', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    res.json({
-      message: 'AI insights retrieved successfully',
-      insights: []
-    });
+    res.json({ message: 'AI insights retrieved successfully', insights: [] });
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch AI insights' });
   }
 });
 
-// Admin AI Recommendations API
 app.get('/api/admin/ai/recommendations', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    res.json({
-      message: 'AI recommendations retrieved successfully',
-      recommendations: []
-    });
+    res.json({ message: 'AI recommendations retrieved successfully', recommendations: [] });
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch AI recommendations' });
   }
@@ -442,4 +396,4 @@ const startServer = async () => {
   }
 };
 
-startServer(); 
+startServer();
