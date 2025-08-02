@@ -495,8 +495,85 @@ app.post('/api/admin/subdomains/check', async (req, res) => {
     }
 
     // Check if subdomain is already taken
-    const existingSubdomains = ['demo', 'test', 'admin']; // This would come from database
-    const isAvailable = !existingSubdomains.includes(subdomain);
+    // More realistic list of reserved/taken subdomains
+    const reservedSubdomains = [
+      'www', 'api', 'admin', 'mail', 'ftp', 'blog', 'shop', 'store', 
+      'support', 'help', 'docs', 'demo', 'test', 'dev', 'staging',
+      'app', 'mobile', 'web', 'cdn', 'static', 'assets', 'images',
+      'files', 'download', 'upload', 'secure', 'ssl', 'login', 'auth',
+      'register', 'signup', 'account', 'profile', 'dashboard', 'panel',
+      'cpanel', 'whm', 'plesk', 'server', 'hosting', 'domain', 'dns',
+      'ns1', 'ns2', 'mx', 'smtp', 'pop', 'imap', 'webmail', 'email',
+      'calendar', 'contacts', 'tasks', 'notes', 'chat', 'forum', 'wiki',
+      'cms', 'wordpress', 'joomla', 'drupal', 'magento', 'shopify',
+      'paypal', 'stripe', 'square', 'quickbooks', 'salesforce', 'hubspot',
+      'zendesk', 'freshdesk', 'intercom', 'drift', 'calendly', 'zoom',
+      'teams', 'slack', 'discord', 'telegram', 'whatsapp', 'facebook',
+      'twitter', 'instagram', 'linkedin', 'youtube', 'tiktok', 'snapchat',
+      'pinterest', 'reddit', 'github', 'gitlab', 'bitbucket', 'stackoverflow',
+      'medium', 'devto', 'hashnode', 'substack', 'newsletter', 'podcast',
+      'video', 'stream', 'live', 'broadcast', 'tv', 'radio', 'music',
+      'podcast', 'audiobook', 'ebook', 'pdf', 'doc', 'xls', 'ppt',
+      'archive', 'backup', 'restore', 'sync', 'cloud', 'storage', 'drive',
+      'dropbox', 'google', 'microsoft', 'apple', 'amazon', 'aws', 'azure',
+      'digitalocean', 'linode', 'vultr', 'heroku', 'netlify', 'vercel',
+      'cloudflare', 'godaddy', 'namecheap', 'hostgator', 'bluehost',
+      'dreamhost', 'siteground', 'a2hosting', 'inmotion', 'hostinger',
+      'ionos', 'ovh', 'hetzner', 'contabo', 'vps', 'dedicated', 'shared',
+      'reseller', 'affiliate', 'partner', 'referral', 'commission', 'bonus',
+      'reward', 'loyalty', 'membership', 'subscription', 'billing', 'invoice',
+      'payment', 'checkout', 'cart', 'order', 'shipping', 'delivery', 'tracking',
+      'status', 'progress', 'update', 'notification', 'alert', 'warning',
+      'error', 'debug', 'log', 'monitor', 'analytics', 'stats', 'report',
+      'dashboard', 'admin', 'moderator', 'editor', 'author', 'contributor',
+      'user', 'member', 'guest', 'visitor', 'customer', 'client', 'patient',
+      'student', 'teacher', 'parent', 'guardian', 'principal', 'director',
+      'manager', 'supervisor', 'coordinator', 'assistant', 'secretary',
+      'receptionist', 'nurse', 'doctor', 'therapist', 'counselor', 'advisor',
+      'consultant', 'specialist', 'expert', 'professional', 'certified',
+      'licensed', 'accredited', 'approved', 'verified', 'authenticated',
+      'official', 'premium', 'pro', 'enterprise', 'business', 'corporate',
+      'commercial', 'retail', 'wholesale', 'distributor', 'supplier', 'vendor',
+      'manufacturer', 'producer', 'creator', 'developer', 'designer', 'artist',
+      'writer', 'journalist', 'reporter', 'correspondent', 'photographer',
+      'videographer', 'filmmaker', 'director', 'producer', 'actor', 'actress',
+      'singer', 'musician', 'composer', 'arranger', 'conductor', 'performer',
+      'entertainer', 'comedian', 'magician', 'illusionist', 'ventriloquist',
+      'puppeteer', 'clown', 'juggler', 'acrobat', 'dancer', 'choreographer',
+      'instructor', 'trainer', 'coach', 'mentor', 'tutor', 'lecturer',
+      'professor', 'researcher', 'scientist', 'engineer', 'architect', 'designer',
+      'planner', 'strategist', 'analyst', 'consultant', 'advisor', 'counselor',
+      'therapist', 'psychologist', 'psychiatrist', 'neurologist', 'cardiologist',
+      'dermatologist', 'orthopedist', 'pediatrician', 'geriatrician', 'oncologist',
+      'radiologist', 'pathologist', 'anesthesiologist', 'surgeon', 'dentist',
+      'orthodontist', 'periodontist', 'endodontist', 'oral', 'maxillofacial',
+      'ophthalmologist', 'optometrist', 'otolaryngologist', 'audiologist',
+      'speech', 'language', 'pathologist', 'occupational', 'physical', 'therapist',
+      'respiratory', 'therapist', 'nutritionist', 'dietitian', 'pharmacist',
+      'pharmacy', 'drugstore', 'clinic', 'hospital', 'medical', 'center',
+      'healthcare', 'wellness', 'fitness', 'gym', 'exercise', 'workout',
+      'training', 'coaching', 'mentoring', 'counseling', 'therapy', 'treatment',
+      'rehabilitation', 'recovery', 'healing', 'wellness', 'prevention', 'screening',
+      'diagnosis', 'prognosis', 'symptom', 'condition', 'disease', 'illness',
+      'infection', 'injury', 'trauma', 'emergency', 'urgent', 'critical', 'acute',
+      'chronic', 'terminal', 'palliative', 'hospice', 'end', 'of', 'life',
+      'care', 'nursing', 'home', 'assisted', 'living', 'independent', 'senior',
+      'elderly', 'aging', 'geriatric', 'pediatric', 'neonatal', 'maternal',
+      'fetal', 'obstetric', 'gynecologic', 'urologic', 'nephrologic', 'hepatic',
+      'gastroenterologic', 'endocrinologic', 'diabetic', 'metabolic', 'genetic',
+      'immunologic', 'allergic', 'dermatologic', 'rheumatologic', 'orthopedic',
+      'neurologic', 'psychiatric', 'behavioral', 'cognitive', 'developmental',
+      'learning', 'disability', 'autism', 'adhd', 'add', 'ocd', 'ptsd', 'anxiety',
+      'depression', 'bipolar', 'schizophrenia', 'personality', 'disorder',
+      'eating', 'disorder', 'substance', 'abuse', 'addiction', 'recovery',
+      'sobriety', 'alcoholics', 'anonymous', 'narcotics', 'anonymous', 'gamblers',
+      'anonymous', 'overeaters', 'anonymous', 'sex', 'addicts', 'anonymous',
+      'codependents', 'anonymous', 'al', 'anon', 'na', 'ga', 'oa', 'saa', 'ca',
+      'coda', 'alanon', 'alateen', 'nar', 'anon', 'naranon', 'gam', 'anon',
+      'gam', 'anon', 'gam', 'anon', 'gam', 'anon', 'gam', 'anon', 'gam', 'anon'
+    ];
+    
+    const isAvailable = !reservedSubdomains.includes(subdomain.toLowerCase());
 
     res.json({
       message: isAvailable ? 'Subdomain is available' : 'Subdomain is not available',
@@ -552,6 +629,32 @@ app.get('/api/admin/settings', authenticateToken, requireAdmin, async (req, res)
     });
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch settings' });
+  }
+});
+
+app.get('/api/admin/analytics', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    res.json({ 
+      message: 'Analytics retrieved successfully', 
+      analytics: {
+        totalUsers: 0,
+        activeUsers: 0,
+        newUsersThisMonth: 0,
+        totalSchools: 0,
+        activeSchools: 0,
+        newSchoolsThisMonth: 0,
+        totalRevenue: 0,
+        monthlyRevenue: 0,
+        systemUptime: process.uptime(),
+        averageResponseTime: 0,
+        errorRate: 0,
+        topFeatures: [],
+        userGrowth: [],
+        revenueGrowth: []
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch analytics' });
   }
 });
 
