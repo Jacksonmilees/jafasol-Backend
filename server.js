@@ -40,7 +40,6 @@ const handleTenant = (req, res, next) => {
       Student: schoolConnection.model('Student', require('./models/Student').schema),
       Teacher: schoolConnection.model('Teacher', require('./models/Teacher').schema),
       School: schoolConnection.model('School', require('./models/School').schema),
-      // Add other models as needed
     };
   } else {
     req.tenant = null;
@@ -422,19 +421,6 @@ app.post('/api/admin/schools', authenticateToken, requireAdmin, async (req, res)
 
     await schoolAdminUser.save();
 
-    // Create school record (when School model is available)
-    const schoolData = {
-      name,
-      email,
-      phone: phone || '',
-      plan: plan || 'Basic',
-      status: 'Active',
-      subdomain: `${subdomain}.jafasol.com`,
-      modules: modules || [],
-      adminUserId: adminUser._id,
-      createdAt: new Date()
-    };
-
     // For now, return success with the created data
     res.status(201).json({
       message: 'School created successfully',
@@ -459,79 +445,6 @@ app.post('/api/admin/schools', authenticateToken, requireAdmin, async (req, res)
       error: 'Failed to create school',
       message: error.message
     });
-  }
-});
-
-app.get('/api/admin/users', authenticateToken, requireAdmin, async (req, res) => {
-  try {
-    const users = await User.find().populate('roleId').select('-password');
-    res.json({ message: 'Users retrieved successfully', users });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch users' });
-  }
-});
-
-// School-specific endpoints
-app.get('/api/students', authenticateSchoolUser, async (req, res) => {
-  try {
-    const students = await req.schoolModels.Student.find().select('-password');
-    res.json({ message: 'Students retrieved successfully', students });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch students' });
-  }
-});
-
-app.get('/api/teachers', authenticateSchoolUser, async (req, res) => {
-  try {
-    const teachers = await req.schoolModels.Teacher.find().select('-password');
-    res.json({ message: 'Teachers retrieved successfully', teachers });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch teachers' });
-  }
-});
-
-app.get('/api/school-info', authenticateSchoolUser, async (req, res) => {
-  try {
-    const school = await req.schoolModels.School.findOne({ subdomain: req.tenant });
-    res.json({ 
-      message: 'School info retrieved successfully', 
-      school: school || { name: req.tenant, subdomain: req.tenant }
-    });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch school info' });
-  }
-});
-
-app.get('/api/admin/settings', authenticateToken, requireAdmin, async (req, res) => {
-  try {
-    res.json({
-      message: 'Settings retrieved successfully',
-      settings: {
-        systemName: 'Jafasol School Management System',
-        version: '1.0.0',
-        environment: process.env.NODE_ENV || 'development',
-        database: 'Connected',
-        uptime: process.uptime()
-      }
-    });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch settings' });
-  }
-});
-
-app.get('/api/admin/notifications', authenticateToken, requireAdmin, async (req, res) => {
-  try {
-    res.json({ message: 'Notifications retrieved successfully', notifications: [] });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch notifications' });
-  }
-});
-
-app.get('/api/admin/support/tickets', authenticateToken, requireAdmin, async (req, res) => {
-  try {
-    res.json({ message: 'Support tickets retrieved successfully', tickets: [] });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch support tickets' });
   }
 });
 
@@ -588,20 +501,9 @@ app.get('/api/admin/subdomains/templates', authenticateToken, requireAdmin, asyn
     res.json({
       message: 'Subdomain templates retrieved successfully',
       templates: [
-        {
-          id: 'template-1',
-          name: 'Standard School Template',
-          description: 'Basic template for standard schools',
-          features: ['Attendance', 'Fees', 'Academics'],
-          price: 0
-        },
-        {
-          id: 'template-2',
-          name: 'Premium School Template',
-          description: 'Advanced template with all features',
-          features: ['Attendance', 'Fees', 'Academics', 'Communication', 'Analytics'],
-          price: 5000
-        }
+        { name: 'school-name', example: 'stmarys' },
+        { name: 'academy-name', example: 'academy' },
+        { name: 'institution-name', example: 'institute' }
       ]
     });
   } catch (error) {
@@ -609,91 +511,43 @@ app.get('/api/admin/subdomains/templates', authenticateToken, requireAdmin, asyn
   }
 });
 
-app.get('/api/admin/backups', authenticateToken, requireAdmin, async (req, res) => {
+app.get('/api/admin/users', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    res.json({ message: 'Backups retrieved successfully', backups: [] });
+    const users = await User.find().populate('roleId').select('-password');
+    res.json({ message: 'Users retrieved successfully', users });
   } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch backups' });
+    res.status(500).json({ error: 'Failed to fetch users' });
   }
 });
 
-app.get('/api/admin/announcements', authenticateToken, requireAdmin, async (req, res) => {
+// School-specific endpoints
+app.get('/api/students', authenticateSchoolUser, async (req, res) => {
   try {
-    res.json({ message: 'Announcements retrieved successfully', announcements: [] });
+    const students = await req.schoolModels.Student.find().select('-password');
+    res.json({ message: 'Students retrieved successfully', students });
   } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch announcements' });
+    res.status(500).json({ error: 'Failed to fetch students' });
   }
 });
 
-app.get('/api/admin/security/login-logs', authenticateToken, requireAdmin, async (req, res) => {
+app.get('/api/teachers', authenticateSchoolUser, async (req, res) => {
   try {
-    res.json({ message: 'Login logs retrieved successfully', logs: [] });
+    const teachers = await req.schoolModels.Teacher.find().select('-password');
+    res.json({ message: 'Teachers retrieved successfully', teachers });
   } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch login logs' });
+    res.status(500).json({ error: 'Failed to fetch teachers' });
   }
 });
 
-app.get('/api/admin/security/audit', authenticateToken, requireAdmin, async (req, res) => {
+app.get('/api/school-info', authenticateSchoolUser, async (req, res) => {
   try {
-    res.json({ message: 'Audit logs retrieved successfully', audit: [] });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch audit logs' });
-  }
-});
-
-app.get('/api/admin/security/settings', authenticateToken, requireAdmin, async (req, res) => {
-  try {
-    res.json({
-      message: 'Security settings retrieved successfully',
-      settings: {
-        twoFactorEnabled: false,
-        sessionTimeout: 24,
-        passwordPolicy: 'Strong',
-        loginAttempts: 5
-      }
+    const school = await req.schoolModels.School.findOne({ subdomain: req.tenant });
+    res.json({ 
+      message: 'School info retrieved successfully', 
+      school: school || { name: req.tenant, subdomain: req.tenant }
     });
   } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch security settings' });
-  }
-});
-
-app.get('/api/admin/features', authenticateToken, requireAdmin, async (req, res) => {
-  try {
-    res.json({ message: 'Features retrieved successfully', features: [] });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch features' });
-  }
-});
-
-app.get('/api/admin/ab-tests', authenticateToken, requireAdmin, async (req, res) => {
-  try {
-    res.json({ message: 'AB tests retrieved successfully', tests: [] });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch AB tests' });
-  }
-});
-
-app.get('/api/admin/ai/chat', authenticateToken, requireAdmin, async (req, res) => {
-  try {
-    res.json({ message: 'AI chat history retrieved successfully', chatHistory: [] });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch AI chat history' });
-  }
-});
-
-app.get('/api/admin/ai/insights', authenticateToken, requireAdmin, async (req, res) => {
-  try {
-    res.json({ message: 'AI insights retrieved successfully', insights: [] });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch AI insights' });
-  }
-});
-
-app.get('/api/admin/ai/recommendations', authenticateToken, requireAdmin, async (req, res) => {
-  try {
-    res.json({ message: 'AI recommendations retrieved successfully', recommendations: [] });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch AI recommendations' });
+    res.status(500).json({ error: 'Failed to fetch school info' });
   }
 });
 
@@ -719,4 +573,4 @@ const startServer = async () => {
   }
 };
 
-startServer();
+startServer(); 

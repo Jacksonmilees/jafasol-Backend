@@ -10,6 +10,45 @@ require('dotenv').config();
 const User = require('./models/User');
 const Role = require('./models/Role');
 
+// Multi-tenant middleware to handle subdomain routing
+const handleTenant = (req, res, next) => {
+  const host = req.get('host');
+  const subdomain = host.split('.')[0];
+  
+  // Skip tenant handling for main admin domain
+  if (host === 'jafasol.com' || host === 'localhost:5000' || host === 'localhost:3000') {
+    req.tenant = null;
+    req.isMainAdmin = true;
+    return next();
+  }
+  
+  // Handle school subdomains
+  if (subdomain && subdomain !== 'www' && subdomain !== 'api') {
+    req.tenant = subdomain;
+    req.isMainAdmin = false;
+    
+    // Connect to school-specific database
+    const schoolDbName = `school_${subdomain}`;
+    const schoolConnection = mongoose.createConnection(
+      process.env.MONGODB_URI.replace('/jafasol?', `/${schoolDbName}?`),
+      { useNewUrlParser: true, useUnifiedTopology: true }
+    );
+    
+    req.schoolDb = schoolConnection;
+    req.schoolModels = {
+      User: schoolConnection.model('User', require('./models/User').schema),
+      Student: schoolConnection.model('Student', require('./models/Student').schema),
+      Teacher: schoolConnection.model('Teacher', require('./models/Teacher').schema),
+      School: schoolConnection.model('School', require('./models/School').schema),
+    };
+  } else {
+    req.tenant = null;
+    req.isMainAdmin = true;
+  }
+  
+  next();
+};
+
 // JWT Authentication Middleware
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
@@ -53,6 +92,46 @@ const requireAdmin = (req, res, next) => {
   next();
 };
 
+// School-specific authentication middleware
+const authenticateSchoolUser = (req, res, next) => {
+  if (!req.tenant) {
+    return res.status(400).json({
+      error: 'Invalid subdomain',
+      message: 'School subdomain is required'
+    });
+  }
+
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+
+  if (!token) {
+    return res.status(401).json({
+      error: 'Access token required',
+      message: 'Please provide a valid authentication token'
+    });
+  }
+
+  jwt.verify(token, process.env.JWT_SECRET || 'jafasol_super_secret_jwt_key_2024_change_in_production', (err, user) => {
+    if (err) {
+      return res.status(403).json({
+        error: 'Invalid or expired token',
+        message: 'Please login again'
+      });
+    }
+    
+    // Verify user belongs to this school
+    if (user.schoolSubdomain !== req.tenant) {
+      return res.status(403).json({
+        error: 'Access denied',
+        message: 'You can only access your school\'s data'
+      });
+    }
+    
+    req.user = user;
+    next();
+  });
+};
+
 const app = express();
 const PORT = process.env.PORT || 5000;
 const JWT_SECRET = process.env.JWT_SECRET || 'jafasol_super_secret_jwt_key_2024_change_in_production';
@@ -65,6 +144,15 @@ app.use(cors({
 }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// Add request timing middleware
+app.use((req, res, next) => {
+  req.startTime = Date.now();
+  next();
+});
+
+// Add tenant middleware
+app.use(handleTenant);
 
 // Serve static files
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
@@ -79,7 +167,7 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// Login endpoint
+// Login endpoint - handles both admin and school logins
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -91,7 +179,17 @@ app.post('/api/auth/login', async (req, res) => {
       });
     }
 
-    const user = await User.findOne({ email: email.toLowerCase() }).populate('roleId');
+    // Determine if this is a school login or admin login
+    const isSchoolLogin = req.tenant && !req.isMainAdmin;
+    
+    let user;
+    if (isSchoolLogin) {
+      // School login - use school-specific database
+      user = await req.schoolModels.User.findOne({ email: email.toLowerCase() }).populate('roleId');
+    } else {
+      // Admin login - use main database
+      user = await User.findOne({ email: email.toLowerCase() }).populate('roleId');
+    }
     
     if (!user) {
       return res.status(401).json({
@@ -123,7 +221,8 @@ app.post('/api/auth/login', async (req, res) => {
         userId: user._id, 
         email: user.email, 
         role: user.roleId?.name,
-        name: user.name 
+        name: user.name,
+        schoolSubdomain: user.schoolSubdomain || req.tenant
       }, 
       JWT_SECRET, 
       { expiresIn: JWT_EXPIRES_IN }
@@ -137,7 +236,8 @@ app.post('/api/auth/login', async (req, res) => {
         name: user.name,
         email: user.email,
         role: user.roleId?.name,
-        avatarUrl: user.avatarUrl
+        avatarUrl: user.avatarUrl,
+        schoolSubdomain: user.schoolSubdomain || req.tenant
       },
       expiresIn: JWT_EXPIRES_IN
     });
@@ -150,36 +250,69 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-// Dashboard API with real stats
-app.get('/api/dashboard', authenticateToken, requireAdmin, async (req, res) => {
+// Dashboard API - handles both admin and school dashboards
+app.get('/api/dashboard', authenticateToken, async (req, res) => {
   try {
-    // Get real stats from database
-    const totalUsers = await User.countDocuments();
-    const activeUsers = await User.countDocuments({ status: 'Active' });
+    // Determine if this is a school dashboard or admin dashboard
+    const isSchoolDashboard = req.tenant && !req.isMainAdmin;
     
-    const stats = {
-      totalSchools: 12,
-      activeSubscriptions: 10,
-      pendingSchools: 2,
-      suspendedSchools: 0,
-      monthlyRevenue: 125000,
-      totalUsers: totalUsers,
-      activeUsers: activeUsers,
-      systemHealth: 'Operational',
-      uptime: 99.9,
-      responseTime: 120,
-      lastUpdated: new Date().toISOString(),
-      // Additional stats for better dashboard
-      newSchoolsThisMonth: 3,
-      totalRevenue: 1500000,
-      averageResponseTime: 85,
-      systemLoad: 45
-    };
+    if (isSchoolDashboard) {
+      // School dashboard - use school-specific database
+      const totalStudents = await req.schoolModels.Student?.countDocuments() || 0;
+      const totalTeachers = await req.schoolModels.Teacher?.countDocuments() || 0;
+      const totalUsers = await req.schoolModels.User.countDocuments();
+      const activeUsers = await req.schoolModels.User.countDocuments({ status: 'Active' });
+      
+      const stats = {
+        totalStudents: totalStudents,
+        totalTeachers: totalTeachers,
+        totalUsers: totalUsers,
+        activeUsers: activeUsers,
+        systemHealth: 'Operational',
+        uptime: process.uptime(),
+        responseTime: Date.now() - req.startTime || 0,
+        lastUpdated: new Date().toISOString(),
+        schoolName: req.tenant,
+        schoolSubdomain: req.tenant
+      };
 
-    res.json({
-      message: 'Dashboard stats retrieved successfully',
-      stats
-    });
+      res.json({
+        message: 'School dashboard stats retrieved successfully',
+        stats
+      });
+    } else {
+      // Admin dashboard - use main database
+      const totalUsers = await User.countDocuments();
+      const activeUsers = await User.countDocuments({ status: 'Active' });
+      
+      // Calculate system health based on real metrics
+      const systemHealth = totalUsers > 0 ? 'Operational' : 'Initializing';
+      const uptime = process.uptime();
+      const responseTime = Date.now() - req.startTime || 0;
+      
+      const stats = {
+        totalSchools: 0, // Will be populated when School model is available
+        activeSubscriptions: 0, // Will be populated when Subscription model is available
+        pendingSchools: 0,
+        suspendedSchools: 0,
+        monthlyRevenue: 0, // Will be populated when Revenue model is available
+        totalUsers: totalUsers,
+        activeUsers: activeUsers,
+        systemHealth: systemHealth,
+        uptime: uptime > 0 ? Math.round((uptime / (24 * 60 * 60)) * 100) / 100 : 0,
+        responseTime: responseTime,
+        lastUpdated: new Date().toISOString(),
+        newSchoolsThisMonth: 0, // Will be populated when School model is available
+        totalRevenue: 0, // Will be populated when Revenue model is available
+        averageResponseTime: responseTime,
+        systemLoad: process.memoryUsage().heapUsed / process.memoryUsage().heapTotal * 100
+      };
+
+      res.json({
+        message: 'Dashboard stats retrieved successfully',
+        stats
+      });
+    }
   } catch (error) {
     console.error('Error fetching dashboard stats:', error);
     res.status(500).json({
@@ -189,105 +322,188 @@ app.get('/api/dashboard', authenticateToken, requireAdmin, async (req, res) => {
   }
 });
 
-// Admin Schools API
+// Admin endpoints
 app.get('/api/admin/schools', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    res.json({
-      message: 'Schools retrieved successfully',
-      schools: []
-    });
+    // For now, return empty array since School model is not implemented yet
+    // This will be populated when School model is available
+    res.json({ message: 'Schools retrieved successfully', schools: [] });
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch schools' });
   }
 });
 
-// Admin Users API
-app.get('/api/admin/users', authenticateToken, requireAdmin, async (req, res) => {
+// Create school with subdomain validation
+app.post('/api/admin/schools', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const users = await User.find().populate('roleId').select('-password');
-    res.json({
-      message: 'Users retrieved successfully',
-      users
-    });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch users' });
-  }
-});
+    const { name, email, phone, plan, subdomain, modules } = req.body;
 
-// Admin Settings API
-app.get('/api/admin/settings', authenticateToken, requireAdmin, async (req, res) => {
-  try {
-    res.json({
-      message: 'Settings retrieved successfully',
-      settings: {
-        systemName: 'Jafasol School Management System',
-        version: '1.0.0',
-        environment: process.env.NODE_ENV || 'development',
-        database: 'Connected',
-        uptime: process.uptime()
+    // Validate required fields
+    if (!name || !email || !subdomain) {
+      return res.status(400).json({
+        error: 'Missing required fields',
+        message: 'School name, email, and subdomain are required'
+      });
+    }
+
+    // Validate subdomain format
+    const subdomainRegex = /^[a-z0-9-]+$/;
+    if (!subdomainRegex.test(subdomain)) {
+      return res.status(400).json({
+        error: 'Invalid subdomain format',
+        message: 'Subdomain can only contain lowercase letters, numbers, and hyphens'
+      });
+    }
+
+    // Check if subdomain is already taken
+    // For now, we'll simulate this check
+    const existingSubdomains = ['demo', 'test', 'admin']; // This would come from database
+    if (existingSubdomains.includes(subdomain)) {
+      return res.status(409).json({
+        error: 'Subdomain already exists',
+        message: 'This subdomain is already taken. Please choose a different one.'
+      });
+    }
+
+    // Generate admin credentials
+    const adminUsername = `admin@${subdomain}.jafasol.com`;
+    const adminPassword = Math.random().toString(36).slice(-8) + Math.random().toString(36).slice(-4);
+
+    // Create school-specific database connection
+    const schoolDbName = `school_${subdomain}`;
+    const schoolConnection = mongoose.createConnection(
+      process.env.MONGODB_URI.replace('/jafasol?', `/${schoolDbName}?`),
+      { useNewUrlParser: true, useUnifiedTopology: true }
+    );
+
+    // Create school models for the new database
+    const SchoolUser = schoolConnection.model('User', require('./models/User').schema);
+    const SchoolStudent = schoolConnection.model('Student', require('./models/Student').schema);
+    const SchoolTeacher = schoolConnection.model('Teacher', require('./models/Teacher').schema);
+    const SchoolSchool = schoolConnection.model('School', require('./models/School').schema);
+
+    // Create admin user for the school in the main database
+    const adminUser = new User({
+      name: `${name} Administrator`,
+      email: adminUsername,
+      password: adminPassword,
+      role: 'Admin',
+      status: 'Active',
+      schoolSubdomain: subdomain
+    });
+
+    await adminUser.save();
+
+    // Create school record in school-specific database
+    const schoolRecord = new SchoolSchool({
+      name: name,
+      email: email,
+      phone: phone || '',
+      plan: plan || 'Basic',
+      status: 'Active',
+      subdomain: `${subdomain}.jafasol.com`,
+      modules: modules || [],
+      adminUserId: adminUser._id,
+      createdAt: new Date()
+    });
+
+    await schoolRecord.save();
+
+    // Create admin user in school-specific database
+    const schoolAdminUser = new SchoolUser({
+      name: `${name} Administrator`,
+      email: adminUsername,
+      password: adminPassword,
+      role: 'Admin',
+      status: 'Active',
+      schoolSubdomain: subdomain
+    });
+
+    await schoolAdminUser.save();
+
+    // For now, return success with the created data
+    res.status(201).json({
+      message: 'School created successfully',
+      school: {
+        id: adminUser._id,
+        name,
+        email,
+        phone: phone || '',
+        plan: plan || 'Basic',
+        status: 'Active',
+        subdomain: `${subdomain}.jafasol.com`,
+        modules: modules || [],
+        adminCredentials: {
+          username: adminUsername,
+          password: adminPassword
+        }
       }
     });
   } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch settings' });
-  }
-});
-
-// Admin Notifications API
-app.get('/api/admin/notifications', authenticateToken, requireAdmin, async (req, res) => {
-  try {
-    res.json({
-      message: 'Notifications retrieved successfully',
-      notifications: []
+    console.error('Error creating school:', error);
+    res.status(500).json({
+      error: 'Failed to create school',
+      message: error.message
     });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch notifications' });
   }
 });
 
-// Admin Support Tickets API
-app.get('/api/admin/support/tickets', authenticateToken, requireAdmin, async (req, res) => {
-  try {
-    res.json({
-      message: 'Support tickets retrieved successfully',
-      tickets: []
-    });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch support tickets' });
-  }
-});
-
-// Admin Subdomains API
 app.get('/api/admin/subdomains', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    res.json({
-      message: 'Subdomains retrieved successfully',
-      subdomains: []
-    });
+    res.json({ message: 'Subdomains retrieved successfully', subdomains: [] });
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch subdomains' });
   }
 });
 
-// Admin Subdomain Templates API (FIXED)
+// Check subdomain availability
+app.post('/api/admin/subdomains/check', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { subdomain } = req.body;
+
+    if (!subdomain) {
+      return res.status(400).json({
+        error: 'Subdomain is required',
+        message: 'Please provide a subdomain to check'
+      });
+    }
+
+    // Validate subdomain format
+    const subdomainRegex = /^[a-z0-9-]+$/;
+    if (!subdomainRegex.test(subdomain)) {
+      return res.status(400).json({
+        error: 'Invalid subdomain format',
+        message: 'Subdomain can only contain lowercase letters, numbers, and hyphens'
+      });
+    }
+
+    // Check if subdomain is already taken
+    const existingSubdomains = ['demo', 'test', 'admin']; // This would come from database
+    const isAvailable = !existingSubdomains.includes(subdomain);
+
+    res.json({
+      message: isAvailable ? 'Subdomain is available' : 'Subdomain is not available',
+      subdomain,
+      available: isAvailable,
+      fullDomain: `${subdomain}.jafasol.com`
+    });
+  } catch (error) {
+    console.error('Error checking subdomain:', error);
+    res.status(500).json({
+      error: 'Failed to check subdomain',
+      message: error.message
+    });
+  }
+});
+
 app.get('/api/admin/subdomains/templates', authenticateToken, requireAdmin, async (req, res) => {
   try {
     res.json({
       message: 'Subdomain templates retrieved successfully',
       templates: [
-        {
-          id: 'template-1',
-          name: 'Standard School Template',
-          description: 'Basic template for standard schools',
-          features: ['Attendance', 'Fees', 'Academics'],
-          price: 0
-        },
-        {
-          id: 'template-2',
-          name: 'Premium School Template',
-          description: 'Advanced template with all features',
-          features: ['Attendance', 'Fees', 'Academics', 'Communication', 'Analytics'],
-          price: 5000
-        }
+        { name: 'school-name', example: 'stmarys' },
+        { name: 'academy-name', example: 'academy' },
+        { name: 'institution-name', example: 'institute' }
       ]
     });
   } catch (error) {
@@ -295,128 +511,43 @@ app.get('/api/admin/subdomains/templates', authenticateToken, requireAdmin, asyn
   }
 });
 
-// Admin Backups API
-app.get('/api/admin/backups', authenticateToken, requireAdmin, async (req, res) => {
+app.get('/api/admin/users', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    res.json({
-      message: 'Backups retrieved successfully',
-      backups: []
-    });
+    const users = await User.find().populate('roleId').select('-password');
+    res.json({ message: 'Users retrieved successfully', users });
   } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch backups' });
+    res.status(500).json({ error: 'Failed to fetch users' });
   }
 });
 
-// Admin Announcements API
-app.get('/api/admin/announcements', authenticateToken, requireAdmin, async (req, res) => {
+// School-specific endpoints
+app.get('/api/students', authenticateSchoolUser, async (req, res) => {
   try {
-    res.json({
-      message: 'Announcements retrieved successfully',
-      announcements: []
-    });
+    const students = await req.schoolModels.Student.find().select('-password');
+    res.json({ message: 'Students retrieved successfully', students });
   } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch announcements' });
+    res.status(500).json({ error: 'Failed to fetch students' });
   }
 });
 
-// Admin Security Login Logs API
-app.get('/api/admin/security/login-logs', authenticateToken, requireAdmin, async (req, res) => {
+app.get('/api/teachers', authenticateSchoolUser, async (req, res) => {
   try {
-    res.json({
-      message: 'Login logs retrieved successfully',
-      logs: []
-    });
+    const teachers = await req.schoolModels.Teacher.find().select('-password');
+    res.json({ message: 'Teachers retrieved successfully', teachers });
   } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch login logs' });
+    res.status(500).json({ error: 'Failed to fetch teachers' });
   }
 });
 
-// Admin Security Audit API
-app.get('/api/admin/security/audit', authenticateToken, requireAdmin, async (req, res) => {
+app.get('/api/school-info', authenticateSchoolUser, async (req, res) => {
   try {
-    res.json({
-      message: 'Audit logs retrieved successfully',
-      audit: []
+    const school = await req.schoolModels.School.findOne({ subdomain: req.tenant });
+    res.json({ 
+      message: 'School info retrieved successfully', 
+      school: school || { name: req.tenant, subdomain: req.tenant }
     });
   } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch audit logs' });
-  }
-});
-
-// Admin Security Settings API
-app.get('/api/admin/security/settings', authenticateToken, requireAdmin, async (req, res) => {
-  try {
-    res.json({
-      message: 'Security settings retrieved successfully',
-      settings: {
-        twoFactorEnabled: false,
-        sessionTimeout: 24,
-        passwordPolicy: 'Strong',
-        loginAttempts: 5
-      }
-    });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch security settings' });
-  }
-});
-
-// Admin Features API
-app.get('/api/admin/features', authenticateToken, requireAdmin, async (req, res) => {
-  try {
-    res.json({
-      message: 'Features retrieved successfully',
-      features: []
-    });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch features' });
-  }
-});
-
-// Admin AB Tests API
-app.get('/api/admin/ab-tests', authenticateToken, requireAdmin, async (req, res) => {
-  try {
-    res.json({
-      message: 'AB tests retrieved successfully',
-      tests: []
-    });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch AB tests' });
-  }
-});
-
-// Admin AI Chat API
-app.get('/api/admin/ai/chat', authenticateToken, requireAdmin, async (req, res) => {
-  try {
-    res.json({
-      message: 'AI chat history retrieved successfully',
-      chatHistory: []
-    });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch AI chat history' });
-  }
-});
-
-// Admin AI Insights API
-app.get('/api/admin/ai/insights', authenticateToken, requireAdmin, async (req, res) => {
-  try {
-    res.json({
-      message: 'AI insights retrieved successfully',
-      insights: []
-    });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch AI insights' });
-  }
-});
-
-// Admin AI Recommendations API
-app.get('/api/admin/ai/recommendations', authenticateToken, requireAdmin, async (req, res) => {
-  try {
-    res.json({
-      message: 'AI recommendations retrieved successfully',
-      recommendations: []
-    });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch AI recommendations' });
+    res.status(500).json({ error: 'Failed to fetch school info' });
   }
 });
 
