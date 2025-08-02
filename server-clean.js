@@ -337,38 +337,29 @@ app.get('/api/admin/schools', authenticateToken, requireAdmin, async (req, res) 
       email: { $regex: /^admin@.*\.jafasol\.com$/ }
     }).populate('roleId');
 
-    // Transform admin users into school objects
-    const schools = await Promise.all(schoolAdmins.map(async (admin) => {
-      // Try to get additional school details from school-specific database
-      let schoolDetails = null;
-      try {
-        const schoolDbName = `school_${admin.schoolSubdomain}`;
-        const schoolConnection = mongoose.createConnection(
-          process.env.MONGODB_URI.replace('/jafasol?', `/${schoolDbName}?`),
-          { useNewUrlParser: true, useUnifiedTopology: true }
-        );
-        const SchoolModel = schoolConnection.model('School', require('./models/School').schema);
-        schoolDetails = await SchoolModel.findOne({ adminUserId: admin._id });
-        schoolConnection.close();
-      } catch (error) {
-        console.log(`Could not fetch details for school ${admin.schoolSubdomain}:`, error.message);
-      }
-
+    // Transform admin users into school objects (simplified - no school-specific DB calls)
+    const schools = schoolAdmins.map((admin) => {
+      // Extract school name from admin name
+      const schoolName = admin.name.replace(' Administrator', '');
+      
+      // Extract email from admin email
+      const schoolEmail = admin.email.replace('admin@', '').replace('.jafasol.com', '');
+      
       return {
         id: admin._id,
-        name: schoolDetails?.name || admin.name.replace(' Administrator', ''),
-        email: schoolDetails?.email || admin.email.replace('admin@', '').replace('.jafasol.com', ''),
-        phone: schoolDetails?.phone || admin.phone || '',
+        name: schoolName,
+        email: schoolEmail,
+        phone: admin.phone || '',
         logoUrl: `https://picsum.photos/seed/${admin._id}/40/40`,
-        plan: schoolDetails?.plan || 'Basic',
-        status: schoolDetails?.status || admin.status || 'Active',
+        plan: 'Basic',
+        status: admin.status || 'Active',
         subdomain: admin.schoolSubdomain,
         storageUsage: 0, // Default storage
         createdAt: admin.createdAt ? admin.createdAt.toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
-        modules: schoolDetails?.modules || [],
+        modules: [],
         adminUserId: admin._id
       };
-    }));
+    });
 
     console.log(`Found ${schools.length} schools in database`);
     
