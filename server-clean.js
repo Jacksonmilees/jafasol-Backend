@@ -29,8 +29,9 @@ const handleTenant = (req, res, next) => {
     
     // Connect to school-specific database
     const schoolDbName = `school_${subdomain}`;
+    const mongoURI = process.env.MONGODB_URI || 'mongodb+srv://wdionet:3r14F65gMv@cluster0.lvltkqp.mongodb.net/jafasol?retryWrites=true&w=majority&appName=Cluster0';
     const schoolConnection = mongoose.createConnection(
-      process.env.MONGODB_URI.replace('/jafasol?', `/${schoolDbName}?`),
+      mongoURI.replace('/jafasol?', `/${schoolDbName}?`),
       { useNewUrlParser: true, useUnifiedTopology: true }
     );
     
@@ -139,7 +140,7 @@ const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '24h';
 
 // Middleware
 app.use(cors({
-  origin: process.env.CORS_ORIGIN || 'https://jafasol.com',
+  origin: true,
   credentials: true
 }));
 app.use(express.json({ limit: '10mb' }));
@@ -154,148 +155,10 @@ app.use((req, res, next) => {
 // Add tenant middleware
 app.use(handleTenant);
 
-// Import and register AI routes
-const aiRoutes = require('./routes/ai');
-app.use('/api/ai', aiRoutes);
-
 // Serve static files
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// Serve school frontend for subdomains
-app.use(async (req, res, next) => {
-  const host = req.get('host');
-  const subdomain = host.split('.')[0];
-  
-  // If this is a school subdomain and not an API request
-  if (subdomain && subdomain !== 'www' && subdomain !== 'api' && 
-      host !== 'jafasol.com' && host !== 'localhost:5000' && host !== 'localhost:3000' &&
-      !req.path.startsWith('/api/')) {
-    
-    try {
-      // Check if the school exists in our database
-      const schoolAdmin = await User.findOne({ 
-        schoolSubdomain: `${subdomain}.jafasol.com`,
-        email: { $regex: /^admin@.*\.jafasol\.com$/ }
-      });
-      
-            if (!schoolAdmin) {
-        return res.status(404).send(`
-          <!DOCTYPE html>
-          <html lang="en">
-          <head>
-              <meta charset="UTF-8">
-              <meta name="viewport" content="width=device-width, initial-scale=1.0">
-              <title>School Not Found</title>
-              <style>
-                  body { font-family: Arial, sans-serif; margin: 0; padding: 0; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); height: 100vh; display: flex; align-items: center; justify-content: center; }
-                  .error-container { background: white; padding: 2rem; border-radius: 10px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); text-align: center; }
-                  .error-title { color: #e74c3c; font-size: 1.5rem; margin-bottom: 1rem; }
-                  .error-message { color: #555; margin-bottom: 1rem; }
-                  .back-link { color: #667eea; text-decoration: none; }
-              </style>
-          </head>
-          <body>
-              <div class="error-container">
-                  <div class="error-title">School Not Found</div>
-                  <div class="error-message">The school "${subdomain}" does not exist or is not configured.</div>
-                  <a href="https://jafasol.com" class="back-link">Go to Jafasol Admin</a>
-              </div>
-          </body>
-          </html>
-        `);
-      }
-      
-      // School exists, serve the frontend
-      // Serve the school frontend
-      const schoolFrontendPath = path.join(__dirname, '../frontend/dist');
-      
-      // For now, serve a simple HTML page for school login
-      if (req.path === '/' || req.path === '/login') {
-        return res.send(`
-          <!DOCTYPE html>
-          <html lang="en">
-          <head>
-              <meta charset="UTF-8">
-              <meta name="viewport" content="width=device-width, initial-scale=1.0">
-              <title>${subdomain} - School Login</title>
-              <style>
-                  body { font-family: Arial, sans-serif; margin: 0; padding: 0; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); height: 100vh; display: flex; align-items: center; justify-content: center; }
-                  .login-container { background: white; padding: 2rem; border-radius: 10px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); width: 100%; max-width: 400px; }
-                  .school-name { text-align: center; color: #333; margin-bottom: 2rem; font-size: 1.5rem; font-weight: bold; }
-                  .form-group { margin-bottom: 1rem; }
-                  label { display: block; margin-bottom: 0.5rem; color: #555; }
-                  input { width: 100%; padding: 0.75rem; border: 1px solid #ddd; border-radius: 5px; box-sizing: border-box; }
-                  button { width: 100%; padding: 0.75rem; background: #667eea; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 1rem; }
-                  button:hover { background: #5a6fd8; }
-                  .error { color: red; margin-top: 1rem; text-align: center; }
-              </style>
-          </head>
-          <body>
-              <div class="login-container">
-                  <div class="school-name">${subdomain.charAt(0).toUpperCase() + subdomain.slice(1)} School</div>
-                  <form id="loginForm">
-                      <div class="form-group">
-                          <label for="email">Email</label>
-                          <input type="email" id="email" name="email" required>
-                      </div>
-                      <div class="form-group">
-                          <label for="password">Password</label>
-                          <input type="password" id="password" name="password" required>
-                      </div>
-                      <button type="submit">Login</button>
-                  </form>
-                  <div id="error" class="error"></div>
-              </div>
-              
-              <script>
-                  document.getElementById('loginForm').addEventListener('submit', async (e) => {
-                      e.preventDefault();
-                      const email = document.getElementById('email').value;
-                      const password = document.getElementById('password').value;
-                      const errorDiv = document.getElementById('error');
-                      
-                      try {
-                          const response = await fetch('/api/auth/login', {
-                              method: 'POST',
-                              headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify({ email, password })
-                          });
-                          
-                          const data = await response.json();
-                          
-                          if (response.ok) {
-                              localStorage.setItem('schoolToken', data.token);
-                              localStorage.setItem('schoolUser', JSON.stringify(data.user));
-                              window.location.href = '/dashboard';
-                          } else {
-                              errorDiv.textContent = data.message || 'Login failed';
-                          }
-                      } catch (error) {
-                          errorDiv.textContent = 'Network error. Please try again.';
-                      }
-                  });
-              </script>
-          </body>
-          </html>
-        `);
-      }
-      
-      // For other routes, serve the school frontend
-      const filePath = path.join(schoolFrontendPath, req.path);
-      if (require('fs').existsSync(filePath)) {
-        return res.sendFile(filePath);
-      } else {
-        // For SPA routing, serve index.html
-        return res.sendFile(path.join(schoolFrontendPath, 'index.html'));
-      }
-    } catch (error) {
-      console.error('Error serving school frontend:', error);
-      return res.status(500).send('Internal server error');
-    }
-  }
-  
-  next();
-});
+// Backend only handles API requests - Nginx handles all frontend serving
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
@@ -325,7 +188,15 @@ app.post('/api/auth/login', async (req, res) => {
     let user;
     if (isSchoolLogin) {
       // School login - use school-specific database
-      user = await req.schoolModels.User.findOne({ email: email.toLowerCase() }).populate('roleId');
+      user = await req.schoolModels.User.findOne({ email: email.toLowerCase() });
+      
+      // Check if user belongs to this school
+      if (user && user.schoolSubdomain !== req.tenant) {
+        return res.status(401).json({
+          error: 'Unauthorized',
+          message: 'You can only login through your school\'s subdomain'
+        });
+      }
     } else {
       // Admin login - use main database
       user = await User.findOne({ email: email.toLowerCase() }).populate('roleId');
@@ -360,7 +231,7 @@ app.post('/api/auth/login', async (req, res) => {
       { 
         userId: user._id, 
         email: user.email, 
-        role: user.roleId?.name,
+        role: user.roleId?.name || 'Admin',
         name: user.name,
         schoolSubdomain: user.schoolSubdomain || req.tenant
       }, 
@@ -371,14 +242,36 @@ app.post('/api/auth/login', async (req, res) => {
     res.json({
       message: 'Login successful',
       token,
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        role: user.roleId?.name,
-        avatarUrl: user.avatarUrl,
-        schoolSubdomain: user.schoolSubdomain || req.tenant
-      },
+              user: {
+          id: user._id,
+          name: user.name,
+          email: user.email,
+          role: {
+            id: user.roleId?._id || 'admin',
+            name: user.roleId?.name || 'Admin',
+            permissions: {
+              Dashboard: { view: true },
+              'User Management': { view: true, create: true, edit: true, delete: true },
+              'Audit Logs': { view: true },
+              Students: { view: true, create: true, edit: true, delete: true },
+              Teachers: { view: true, create: true, edit: true, delete: true },
+              Academics: { view: true, create: true, edit: true, delete: true },
+              Attendance: { view: true, create: true, edit: true },
+              Timetable: { view: true, create: true, edit: true },
+              Exams: { view: true, create: true, edit: true },
+              Fees: { view: true, create: true, edit: true },
+              Communication: { view: true, create: true },
+              Library: { view: true, create: true, edit: true },
+              'Learning Resources': { view: true, create: true, edit: true, delete: true },
+              Transport: { view: true, create: true, edit: true },
+              Documents: { view: true, create: true, edit: true },
+              Reports: { view: true },
+              Settings: { view: true, edit: true }
+            }
+          },
+          avatarUrl: user.avatarUrl,
+          schoolSubdomain: user.schoolSubdomain || req.tenant
+        },
       expiresIn: JWT_EXPIRES_IN
     });
   } catch (error) {
@@ -952,6 +845,20 @@ app.get('/api/school-info', authenticateSchoolUser, async (req, res) => {
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch school info' });
   }
+});
+
+// 404 handler for non-API routes - must be at the end
+app.use((req, res) => {
+  if (!req.path.startsWith('/api/')) {
+    return res.status(404).json({
+      error: 'Not Found',
+      message: 'This endpoint is not available'
+    });
+  }
+  res.status(404).json({
+    error: 'API Not Found',
+    message: 'The requested API endpoint does not exist'
+  });
 });
 
 // Start server
