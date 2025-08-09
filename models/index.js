@@ -15,6 +15,8 @@ const { Message } = require('./Message');
 const { Book } = require('./Book');
 const { BookIssue } = require('./BookIssue');
 const { LearningResource } = require('./LearningResource');
+const Vehicle = require('./Vehicle');
+const Route = require('./Route');
 
 // User - Role relationship
 User.belongsTo(Role, { as: 'role', foreignKey: 'roleId' });
@@ -74,6 +76,10 @@ User.hasMany(BookIssue, { as: 'returnedBooks', foreignKey: 'returnedTo' });
 LearningResource.belongsTo(User, { as: 'uploader', foreignKey: 'uploadedBy' });
 User.hasMany(LearningResource, { as: 'uploadedResources', foreignKey: 'uploadedBy' });
 
+// Transport relationships
+Vehicle.belongsTo(Route, { foreignKey: 'route' });
+Route.hasMany(Vehicle, { foreignKey: 'route' });
+
 module.exports = {
   User,
   Role,
@@ -91,5 +97,7 @@ module.exports = {
   Message,
   Book,
   BookIssue,
-  LearningResource
+  LearningResource,
+  Vehicle,
+  Route
 }; 

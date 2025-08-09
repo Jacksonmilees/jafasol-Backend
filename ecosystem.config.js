@@ -2,7 +2,7 @@ module.exports = {
   apps: [
     {
       name: 'jafasol-backend',
-      script: 'server-simple.js',
+      script: 'server-clean.js',
       cwd: '/var/www/jafasol/backend',
       instances: 1,
       autorestart: true,

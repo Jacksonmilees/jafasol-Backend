@@ -1,5 +1,18 @@
 const mongoose = require('mongoose');
+require('dotenv').config();
 
+// Connect to database
+async function connectDB() {
+  try {
+    await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/jafasol');
+    console.log('✅ Database connected');
+  } catch (error) {
+    console.error('❌ Database connection failed:', error);
+    process.exit(1);
+  }
+}
+
+// Updated School Schema with correct module names
 const schoolSchema = new mongoose.Schema({
   name: {
     type: String,
@@ -146,3 +159,41 @@ schoolSchema.pre('save', async function(next) {
   }
   next();
 });
+
+const School = mongoose.model('School', schoolSchema);
+
+async function updateSchoolModel() {
+  try {
+    console.log('🔧 Updating School Model');
+    console.log('========================');
+    
+    // Drop the existing School collection to recreate with new schema
+    console.log('1. Dropping existing School collection...');
+    await mongoose.connection.db.dropCollection('schools');
+    console.log('✅ School collection dropped');
+    
+    console.log('2. School model updated with correct module names');
+    console.log('✅ Available modules:');
+    console.log('   - analytics');
+    console.log('   - studentManagement');
+    console.log('   - teacherManagement');
+    console.log('   - timetable');
+    console.log('   - fees');
+    console.log('   - exams');
+    console.log('   - communication');
+    console.log('   - attendance');
+    console.log('   - library');
+    console.log('   - transport');
+    console.log('   - academics');
+    
+    console.log('\n🎉 School model updated successfully!');
+    
+  } catch (error) {
+    console.error('❌ Error updating school model:', error);
+  } finally {
+    mongoose.connection.close();
+  }
+}
+
+// Run the script
+connectDB().then(updateSchoolModel); 

@@ -2,64 +2,52 @@ const express = require('express');
 const { body, validationResult, query } = require('express-validator');
 const { requireRole, requirePermission } = require('../middleware/auth');
 const { createAuditLog } = require('../utils/auditLogger');
-const { Op } = require('sequelize');
+const { Vehicle, Route } = require('../models');
+const redis = require('redis');
 
 const router = express.Router();
 
-// Mock data for transport management (in a real app, these would be database models)
-let vehicles = [
-  {
-    id: '1',
-    vehicleNumber: 'KCA 123A',
-    vehicleType: 'Bus',
-    capacity: 45,
-    driverName: 'John Doe',
-    driverPhone: '+254700123456',
-    status: 'Active',
-    route: 'Route A',
-    createdAt: new Date(),
-    updatedAt: new Date()
-  },
-  {
-    id: '2',
-    vehicleNumber: 'KCB 456B',
-    vehicleType: 'Minibus',
-    capacity: 25,
-    driverName: 'Jane Smith',
-    driverPhone: '+254700789012',
-    status: 'Active',
-    route: 'Route B',
-    createdAt: new Date(),
-    updatedAt: new Date()
-  }
-];
+// Redis client for caching
+const redisClient = redis.createClient({
+  url: process.env.REDIS_URL || 'redis://localhost:6379'
+});
 
-let routes = [
-  {
-    id: '1',
-    routeName: 'Route A',
-    startPoint: 'Nairobi CBD',
-    endPoint: 'Westlands',
-    stops: ['CBD', 'Westlands', 'Kilimani', 'Lavington'],
-    estimatedTime: '45 minutes',
-    vehicleId: '1',
-    status: 'Active',
-    createdAt: new Date(),
-    updatedAt: new Date()
-  },
-  {
-    id: '2',
-    routeName: 'Route B',
-    startPoint: 'Nairobi CBD',
-    endPoint: 'Eastlands',
-    stops: ['CBD', 'Eastlands', 'Buruburu', 'Donholm'],
-    estimatedTime: '30 minutes',
-    vehicleId: '2',
-    status: 'Active',
-    createdAt: new Date(),
-    updatedAt: new Date()
+redisClient.on('error', (err) => console.log('Redis Client Error', err));
+redisClient.connect().catch(console.error);
+
+// Cache helper functions
+const cacheKey = (prefix, schoolSubdomain, params = '') => {
+  return `${prefix}:${schoolSubdomain}:${params}`;
+};
+
+const getCachedData = async (key) => {
+  try {
+    const cached = await redisClient.get(key);
+    return cached ? JSON.parse(cached) : null;
+  } catch (error) {
+    console.error('Redis get error:', error);
+    return null;
   }
-];
+};
+
+const setCachedData = async (key, data, expireTime = 300) => {
+  try {
+    await redisClient.setEx(key, expireTime, JSON.stringify(data));
+  } catch (error) {
+    console.error('Redis set error:', error);
+  }
+};
+
+const invalidateCache = async (prefix, schoolSubdomain) => {
+  try {
+    const keys = await redisClient.keys(`${prefix}:${schoolSubdomain}:*`);
+    if (keys.length > 0) {
+      await redisClient.del(keys);
+    }
+  } catch (error) {
+    console.error('Redis invalidate error:', error);
+  }
+};
 
 // Get all vehicles with pagination and filtering
 router.get('/vehicles', [
@@ -83,38 +71,60 @@ router.get('/vehicles', [
     const limit = parseInt(req.query.limit) || 20;
     const offset = (page - 1) * limit;
     const { search, status, vehicleType } = req.query;
+    const schoolSubdomain = req.schoolSubdomain;
 
-    // Filter vehicles
-    let filteredVehicles = vehicles;
+    // Try to get from cache first
+    const cacheParams = `page=${page}&limit=${limit}&search=${search || ''}&status=${status || ''}&vehicleType=${vehicleType || ''}`;
+    const cacheKeyName = cacheKey('vehicles', schoolSubdomain, cacheParams);
+    const cachedData = await getCachedData(cacheKeyName);
+    
+    if (cachedData) {
+      return res.json(cachedData);
+    }
+
+    // Build query
+    const whereClause = { schoolSubdomain };
     
     if (search) {
-      filteredVehicles = filteredVehicles.filter(vehicle =>
-        vehicle.vehicleNumber.toLowerCase().includes(search.toLowerCase()) ||
-        vehicle.driverName.toLowerCase().includes(search.toLowerCase()) ||
-        vehicle.route.toLowerCase().includes(search.toLowerCase())
-      );
+      whereClause.$or = [
+        { vehicleNumber: { $regex: search, $options: 'i' } },
+        { driverName: { $regex: search, $options: 'i' } }
+      ];
     }
     
     if (status) {
-      filteredVehicles = filteredVehicles.filter(vehicle => vehicle.status === status);
+      whereClause.status = status;
     }
     
     if (vehicleType) {
-      filteredVehicles = filteredVehicles.filter(vehicle => vehicle.vehicleType === vehicleType);
+      whereClause.vehicleType = vehicleType;
     }
 
-    const total = filteredVehicles.length;
-    const paginatedVehicles = filteredVehicles.slice(offset, offset + limit);
+    // Execute query
+    const [vehicles, total] = await Promise.all([
+      Vehicle.find(whereClause)
+        .populate('route', 'routeName')
+        .sort({ createdAt: -1 })
+        .skip(offset)
+        .limit(limit)
+        .lean(),
+      Vehicle.countDocuments(whereClause)
+    ]);
 
-    res.json({
-      vehicles: paginatedVehicles,
+    const result = {
+      data: vehicles,
       pagination: {
         page,
         limit,
         total,
         totalPages: Math.ceil(total / limit)
       }
-    });
+    };
+
+    // Cache the result
+    await setCachedData(cacheKeyName, result);
+
+    res.json(result);
 
   } catch (error) {
     console.error('Get vehicles error:', error);
@@ -129,7 +139,19 @@ router.get('/vehicles', [
 router.get('/vehicles/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const vehicle = vehicles.find(v => v.id === id);
+    const schoolSubdomain = req.schoolSubdomain;
+
+    // Try to get from cache first
+    const cacheKeyName = cacheKey('vehicle', schoolSubdomain, id);
+    const cachedData = await getCachedData(cacheKeyName);
+    
+    if (cachedData) {
+      return res.json(cachedData);
+    }
+
+    const vehicle = await Vehicle.findOne({ _id: id, schoolSubdomain })
+      .populate('route', 'routeName startPoint endPoint')
+      .lean();
 
     if (!vehicle) {
       return res.status(404).json({
@@ -138,7 +160,12 @@ router.get('/vehicles/:id', async (req, res) => {
       });
     }
 
-    res.json({ vehicle });
+    const result = { data: vehicle };
+
+    // Cache the result
+    await setCachedData(cacheKeyName, result);
+
+    res.json(result);
 
   } catch (error) {
     console.error('Get vehicle error:', error);
@@ -170,9 +197,10 @@ router.post('/vehicles', [
     }
 
     const { vehicleNumber, vehicleType, capacity, driverName, driverPhone, route, status = 'Active' } = req.body;
+    const schoolSubdomain = req.schoolSubdomain;
 
     // Check if vehicle number already exists
-    const existingVehicle = vehicles.find(v => v.vehicleNumber === vehicleNumber);
+    const existingVehicle = await Vehicle.findOne({ vehicleNumber, schoolSubdomain });
     if (existingVehicle) {
       return res.status(409).json({
         error: 'Vehicle already exists',
@@ -180,27 +208,33 @@ router.post('/vehicles', [
       });
     }
 
-    const newVehicle = {
-      id: (vehicles.length + 1).toString(),
+    const newVehicle = new Vehicle({
       vehicleNumber,
       vehicleType,
       capacity,
       driverName,
       driverPhone,
-      route: route || '',
+      route: route || null,
       status,
-      createdAt: new Date(),
-      updatedAt: new Date()
-    };
+      schoolSubdomain
+    });
 
-    vehicles.push(newVehicle);
+    await newVehicle.save();
+
+    // Invalidate cache
+    await invalidateCache('vehicles', schoolSubdomain);
+    await invalidateCache('vehicle', schoolSubdomain);
 
     // Create audit log
-    await createAuditLog(req.user.id, 'Vehicle Created', { type: 'Vehicle', id: newVehicle.id, vehicleNumber: newVehicle.vehicleNumber }, `Created by ${req.user.name}`);
+    await createAuditLog(req.user.id, 'Vehicle Created', { 
+      type: 'Vehicle', 
+      id: newVehicle._id, 
+      vehicleNumber: newVehicle.vehicleNumber 
+    }, `Created by ${req.user.name}`);
 
     res.status(201).json({
       message: 'Vehicle created successfully',
-      vehicle: newVehicle
+      data: newVehicle
     });
 
   } catch (error) {
@@ -233,21 +267,25 @@ router.put('/vehicles/:id', [
     }
 
     const { id } = req.params;
-    const vehicleIndex = vehicles.findIndex(v => v.id === id);
+    const schoolSubdomain = req.schoolSubdomain;
+    const updateData = req.body;
 
-    if (vehicleIndex === -1) {
+    const vehicle = await Vehicle.findOne({ _id: id, schoolSubdomain });
+
+    if (!vehicle) {
       return res.status(404).json({
         error: 'Vehicle not found',
         message: 'No vehicle found with the provided ID'
       });
     }
 
-    const vehicle = vehicles[vehicleIndex];
-    const { vehicleNumber, vehicleType, capacity, driverName, driverPhone, route, status } = req.body;
-
     // Check if vehicle number is being changed and if it already exists
-    if (vehicleNumber && vehicleNumber !== vehicle.vehicleNumber) {
-      const existingVehicle = vehicles.find(v => v.vehicleNumber === vehicleNumber);
+    if (updateData.vehicleNumber && updateData.vehicleNumber !== vehicle.vehicleNumber) {
+      const existingVehicle = await Vehicle.findOne({ 
+        vehicleNumber: updateData.vehicleNumber, 
+        schoolSubdomain,
+        _id: { $ne: id }
+      });
       if (existingVehicle) {
         return res.status(409).json({
           error: 'Vehicle number already exists',
@@ -257,23 +295,23 @@ router.put('/vehicles/:id', [
     }
 
     // Update vehicle
-    if (vehicleNumber) vehicle.vehicleNumber = vehicleNumber;
-    if (vehicleType) vehicle.vehicleType = vehicleType;
-    if (capacity) vehicle.capacity = capacity;
-    if (driverName) vehicle.driverName = driverName;
-    if (driverPhone) vehicle.driverPhone = driverPhone;
-    if (route !== undefined) vehicle.route = route;
-    if (status) vehicle.status = status;
-    vehicle.updatedAt = new Date();
+    Object.assign(vehicle, updateData);
+    await vehicle.save();
 
-    vehicles[vehicleIndex] = vehicle;
+    // Invalidate cache
+    await invalidateCache('vehicles', schoolSubdomain);
+    await invalidateCache('vehicle', schoolSubdomain);
 
     // Create audit log
-    await createAuditLog(req.user.id, 'Vehicle Updated', { type: 'Vehicle', id: vehicle.id, vehicleNumber: vehicle.vehicleNumber }, `Updated by ${req.user.name}`);
+    await createAuditLog(req.user.id, 'Vehicle Updated', { 
+      type: 'Vehicle', 
+      id: vehicle._id, 
+      vehicleNumber: vehicle.vehicleNumber 
+    }, `Updated by ${req.user.name}`);
 
     res.json({
       message: 'Vehicle updated successfully',
-      vehicle
+      data: vehicle
     });
 
   } catch (error) {
@@ -289,21 +327,29 @@ router.put('/vehicles/:id', [
 router.delete('/vehicles/:id', requirePermission('Transport Management', 'delete'), async (req, res) => {
   try {
     const { id } = req.params;
-    const vehicleIndex = vehicles.findIndex(v => v.id === id);
+    const schoolSubdomain = req.schoolSubdomain;
 
-    if (vehicleIndex === -1) {
+    const vehicle = await Vehicle.findOne({ _id: id, schoolSubdomain });
+
+    if (!vehicle) {
       return res.status(404).json({
         error: 'Vehicle not found',
         message: 'No vehicle found with the provided ID'
       });
     }
 
-    const vehicle = vehicles[vehicleIndex];
-
     // Create audit log before deletion
-    await createAuditLog(req.user.id, 'Vehicle Deleted', { type: 'Vehicle', id: vehicle.id, vehicleNumber: vehicle.vehicleNumber }, `Deleted by ${req.user.name}`);
+    await createAuditLog(req.user.id, 'Vehicle Deleted', { 
+      type: 'Vehicle', 
+      id: vehicle._id, 
+      vehicleNumber: vehicle.vehicleNumber 
+    }, `Deleted by ${req.user.name}`);
 
-    vehicles.splice(vehicleIndex, 1);
+    await Vehicle.findByIdAndDelete(id);
+
+    // Invalidate cache
+    await invalidateCache('vehicles', schoolSubdomain);
+    await invalidateCache('vehicle', schoolSubdomain);
 
     res.json({
       message: 'Vehicle deleted successfully'
@@ -339,34 +385,57 @@ router.get('/routes', [
     const limit = parseInt(req.query.limit) || 20;
     const offset = (page - 1) * limit;
     const { search, status } = req.query;
+    const schoolSubdomain = req.schoolSubdomain;
 
-    // Filter routes
-    let filteredRoutes = routes;
+    // Try to get from cache first
+    const cacheParams = `page=${page}&limit=${limit}&search=${search || ''}&status=${status || ''}`;
+    const cacheKeyName = cacheKey('routes', schoolSubdomain, cacheParams);
+    const cachedData = await getCachedData(cacheKeyName);
+    
+    if (cachedData) {
+      return res.json(cachedData);
+    }
+
+    // Build query
+    const whereClause = { schoolSubdomain };
     
     if (search) {
-      filteredRoutes = filteredRoutes.filter(route =>
-        route.routeName.toLowerCase().includes(search.toLowerCase()) ||
-        route.startPoint.toLowerCase().includes(search.toLowerCase()) ||
-        route.endPoint.toLowerCase().includes(search.toLowerCase())
-      );
+      whereClause.$or = [
+        { routeName: { $regex: search, $options: 'i' } },
+        { startPoint: { $regex: search, $options: 'i' } },
+        { endPoint: { $regex: search, $options: 'i' } }
+      ];
     }
     
     if (status) {
-      filteredRoutes = filteredRoutes.filter(route => route.status === status);
+      whereClause.status = status;
     }
 
-    const total = filteredRoutes.length;
-    const paginatedRoutes = filteredRoutes.slice(offset, offset + limit);
+    // Execute query
+    const [routes, total] = await Promise.all([
+      Route.find(whereClause)
+        .populate('vehicleId', 'vehicleNumber driverName')
+        .sort({ createdAt: -1 })
+        .skip(offset)
+        .limit(limit)
+        .lean(),
+      Route.countDocuments(whereClause)
+    ]);
 
-    res.json({
-      routes: paginatedRoutes,
+    const result = {
+      data: routes,
       pagination: {
         page,
         limit,
         total,
         totalPages: Math.ceil(total / limit)
       }
-    });
+    };
+
+    // Cache the result
+    await setCachedData(cacheKeyName, result);
+
+    res.json(result);
 
   } catch (error) {
     console.error('Get routes error:', error);
@@ -381,7 +450,19 @@ router.get('/routes', [
 router.get('/routes/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const route = routes.find(r => r.id === id);
+    const schoolSubdomain = req.schoolSubdomain;
+
+    // Try to get from cache first
+    const cacheKeyName = cacheKey('route', schoolSubdomain, id);
+    const cachedData = await getCachedData(cacheKeyName);
+    
+    if (cachedData) {
+      return res.json(cachedData);
+    }
+
+    const route = await Route.findOne({ _id: id, schoolSubdomain })
+      .populate('vehicleId', 'vehicleNumber driverName')
+      .lean();
 
     if (!route) {
       return res.status(404).json({
@@ -390,7 +471,12 @@ router.get('/routes/:id', async (req, res) => {
       });
     }
 
-    res.json({ route });
+    const result = { data: route };
+
+    // Cache the result
+    await setCachedData(cacheKeyName, result);
+
+    res.json(result);
 
   } catch (error) {
     console.error('Get route error:', error);
@@ -422,9 +508,10 @@ router.post('/routes', [
     }
 
     const { routeName, startPoint, endPoint, stops, estimatedTime, vehicleId, status = 'Active' } = req.body;
+    const schoolSubdomain = req.schoolSubdomain;
 
     // Check if route name already exists
-    const existingRoute = routes.find(r => r.routeName === routeName);
+    const existingRoute = await Route.findOne({ routeName, schoolSubdomain });
     if (existingRoute) {
       return res.status(409).json({
         error: 'Route already exists',
@@ -432,8 +519,7 @@ router.post('/routes', [
       });
     }
 
-    const newRoute = {
-      id: (routes.length + 1).toString(),
+    const newRoute = new Route({
       routeName,
       startPoint,
       endPoint,
@@ -441,18 +527,25 @@ router.post('/routes', [
       estimatedTime,
       vehicleId: vehicleId || null,
       status,
-      createdAt: new Date(),
-      updatedAt: new Date()
-    };
+      schoolSubdomain
+    });
 
-    routes.push(newRoute);
+    await newRoute.save();
+
+    // Invalidate cache
+    await invalidateCache('routes', schoolSubdomain);
+    await invalidateCache('route', schoolSubdomain);
 
     // Create audit log
-    await createAuditLog(req.user.id, 'Route Created', { type: 'Route', id: newRoute.id, routeName: newRoute.routeName }, `Created by ${req.user.name}`);
+    await createAuditLog(req.user.id, 'Route Created', { 
+      type: 'Route', 
+      id: newRoute._id, 
+      routeName: newRoute.routeName 
+    }, `Created by ${req.user.name}`);
 
     res.status(201).json({
       message: 'Route created successfully',
-      route: newRoute
+      data: newRoute
     });
 
   } catch (error) {
@@ -485,21 +578,25 @@ router.put('/routes/:id', [
     }
 
     const { id } = req.params;
-    const routeIndex = routes.findIndex(r => r.id === id);
+    const schoolSubdomain = req.schoolSubdomain;
+    const updateData = req.body;
 
-    if (routeIndex === -1) {
+    const route = await Route.findOne({ _id: id, schoolSubdomain });
+
+    if (!route) {
       return res.status(404).json({
         error: 'Route not found',
         message: 'No route found with the provided ID'
       });
     }
 
-    const route = routes[routeIndex];
-    const { routeName, startPoint, endPoint, stops, estimatedTime, vehicleId, status } = req.body;
-
     // Check if route name is being changed and if it already exists
-    if (routeName && routeName !== route.routeName) {
-      const existingRoute = routes.find(r => r.routeName === routeName);
+    if (updateData.routeName && updateData.routeName !== route.routeName) {
+      const existingRoute = await Route.findOne({ 
+        routeName: updateData.routeName, 
+        schoolSubdomain,
+        _id: { $ne: id }
+      });
       if (existingRoute) {
         return res.status(409).json({
           error: 'Route name already exists',
@@ -509,23 +606,23 @@ router.put('/routes/:id', [
     }
 
     // Update route
-    if (routeName) route.routeName = routeName;
-    if (startPoint) route.startPoint = startPoint;
-    if (endPoint) route.endPoint = endPoint;
-    if (stops) route.stops = stops;
-    if (estimatedTime) route.estimatedTime = estimatedTime;
-    if (vehicleId !== undefined) route.vehicleId = vehicleId;
-    if (status) route.status = status;
-    route.updatedAt = new Date();
+    Object.assign(route, updateData);
+    await route.save();
 
-    routes[routeIndex] = route;
+    // Invalidate cache
+    await invalidateCache('routes', schoolSubdomain);
+    await invalidateCache('route', schoolSubdomain);
 
     // Create audit log
-    await createAuditLog(req.user.id, 'Route Updated', { type: 'Route', id: route.id, routeName: route.routeName }, `Updated by ${req.user.name}`);
+    await createAuditLog(req.user.id, 'Route Updated', { 
+      type: 'Route', 
+      id: route._id, 
+      routeName: route.routeName 
+    }, `Updated by ${req.user.name}`);
 
     res.json({
       message: 'Route updated successfully',
-      route
+      data: route
     });
 
   } catch (error) {
@@ -541,21 +638,29 @@ router.put('/routes/:id', [
 router.delete('/routes/:id', requirePermission('Transport Management', 'delete'), async (req, res) => {
   try {
     const { id } = req.params;
-    const routeIndex = routes.findIndex(r => r.id === id);
+    const schoolSubdomain = req.schoolSubdomain;
 
-    if (routeIndex === -1) {
+    const route = await Route.findOne({ _id: id, schoolSubdomain });
+
+    if (!route) {
       return res.status(404).json({
         error: 'Route not found',
         message: 'No route found with the provided ID'
       });
     }
 
-    const route = routes[routeIndex];
-
     // Create audit log before deletion
-    await createAuditLog(req.user.id, 'Route Deleted', { type: 'Route', id: route.id, routeName: route.routeName }, `Deleted by ${req.user.name}`);
+    await createAuditLog(req.user.id, 'Route Deleted', { 
+      type: 'Route', 
+      id: route._id, 
+      routeName: route.routeName 
+    }, `Deleted by ${req.user.name}`);
 
-    routes.splice(routeIndex, 1);
+    await Route.findByIdAndDelete(id);
+
+    // Invalidate cache
+    await invalidateCache('routes', schoolSubdomain);
+    await invalidateCache('route', schoolSubdomain);
 
     res.json({
       message: 'Route deleted successfully'
@@ -573,27 +678,58 @@ router.delete('/routes/:id', requirePermission('Transport Management', 'delete')
 // Get transport statistics
 router.get('/statistics', async (req, res) => {
   try {
-    const totalVehicles = vehicles.length;
-    const activeVehicles = vehicles.filter(v => v.status === 'Active').length;
-    const totalRoutes = routes.length;
-    const activeRoutes = routes.filter(r => r.status === 'Active').length;
-    const totalCapacity = vehicles.reduce((sum, v) => sum + v.capacity, 0);
+    const schoolSubdomain = req.schoolSubdomain;
 
-    const vehicleTypes = vehicles.reduce((acc, vehicle) => {
-      acc[vehicle.vehicleType] = (acc[vehicle.vehicleType] || 0) + 1;
+    // Try to get from cache first
+    const cacheKeyName = cacheKey('transport_stats', schoolSubdomain);
+    const cachedData = await getCachedData(cacheKeyName);
+    
+    if (cachedData) {
+      return res.json(cachedData);
+    }
+
+    const [
+      totalVehicles,
+      activeVehicles,
+      totalRoutes,
+      activeRoutes,
+      vehicleTypes,
+      totalCapacity
+    ] = await Promise.all([
+      Vehicle.countDocuments({ schoolSubdomain }),
+      Vehicle.countDocuments({ schoolSubdomain, status: 'Active' }),
+      Route.countDocuments({ schoolSubdomain }),
+      Route.countDocuments({ schoolSubdomain, status: 'Active' }),
+      Vehicle.aggregate([
+        { $match: { schoolSubdomain } },
+        { $group: { _id: '$vehicleType', count: { $sum: 1 } } }
+      ]),
+      Vehicle.aggregate([
+        { $match: { schoolSubdomain } },
+        { $group: { _id: null, total: { $sum: '$capacity' } } }
+      ])
+    ]);
+
+    const vehicleTypesMap = vehicleTypes.reduce((acc, type) => {
+      acc[type._id] = type.count;
       return acc;
     }, {});
 
-    res.json({
-      statistics: {
+    const result = {
+      data: {
         totalVehicles,
         activeVehicles,
         totalRoutes,
         activeRoutes,
-        totalCapacity,
-        vehicleTypes
+        totalCapacity: totalCapacity[0]?.total || 0,
+        vehicleTypes: vehicleTypesMap
       }
-    });
+    };
+
+    // Cache the result for 5 minutes
+    await setCachedData(cacheKeyName, result, 300);
+
+    res.json(result);
 
   } catch (error) {
     console.error('Get transport statistics error:', error);
