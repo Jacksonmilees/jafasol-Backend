@@ -1,53 +1,92 @@
-const { DataTypes } = require('sequelize');
-const { sequelize } = require('../config/database');
+const mongoose = require('mongoose');
 
-const FeeStructure = sequelize.define('FeeStructure', {
-  id: {
-    type: DataTypes.UUID,
-    defaultValue: DataTypes.UUIDV4,
-    primaryKey: true
-  },
-  formLevel: {
-    type: DataTypes.STRING,
-    allowNull: false
-  },
-  amount: {
-    type: DataTypes.DECIMAL(10, 2),
-    allowNull: false,
-    validate: {
-      min: 0
-    }
-  },
-  type: {
-    type: DataTypes.ENUM('Tuition', 'Boarding', 'Transport'),
-    allowNull: false
-  },
-  term: {
-    type: DataTypes.STRING,
-    allowNull: false
-  },
-  dueDate: {
-    type: DataTypes.DATEONLY,
-    allowNull: false
+const feeStructureSchema = new mongoose.Schema({
+  name: {
+    type: String,
+    required: [true, 'Fee structure name is required'],
+    trim: true
   },
   description: {
-    type: DataTypes.TEXT,
-    allowNull: true
+    type: String,
+    trim: true
+  },
+  academicYear: {
+    type: String,
+    required: [true, 'Academic year is required']
+  },
+  term: {
+    type: String,
+    required: [true, 'Term is required']
+  },
+  classId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'SchoolClass',
+    required: [true, 'Class is required']
+  },
+  fees: {
+    type: [{
+      name: {
+        type: String,
+        required: true
+      },
+      amount: {
+        type: Number,
+        required: true,
+        min: [0, 'Amount cannot be negative']
+      },
+      dueDate: {
+        type: Date,
+        required: true
+      },
+      isOptional: {
+        type: Boolean,
+        default: false
+      },
+      description: String
+    }],
+    default: []
+  },
+  totalAmount: {
+    type: Number,
+    required: [true, 'Total amount is required'],
+    min: [0, 'Total amount cannot be negative']
   },
   isActive: {
-    type: DataTypes.BOOLEAN,
-    defaultValue: true
+    type: Boolean,
+    default: true
+  },
+  createdBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true
   }
 }, {
-  tableName: 'fee_structures',
-  indexes: [
-    {
-      fields: ['formLevel']
-    },
-    {
-      fields: ['type']
-    }
-  ]
+  timestamps: true,
+  toJSON: { virtuals: true },
+  toObject: { virtuals: true }
 });
 
-module.exports = FeeStructure; 
+// Indexes for better query performance
+feeStructureSchema.index({ academicYear: 1, term: 1 });
+feeStructureSchema.index({ classId: 1 });
+feeStructureSchema.index({ isActive: 1 });
+
+// Virtual for mandatory fees
+feeStructureSchema.virtual('mandatoryFees').get(function() {
+  return this.fees.filter(fee => !fee.isOptional);
+});
+
+// Virtual for optional fees
+feeStructureSchema.virtual('optionalFees').get(function() {
+  return this.fees.filter(fee => fee.isOptional);
+});
+
+// Virtual for mandatory total
+feeStructureSchema.virtual('mandatoryTotal').get(function() {
+  return this.mandatoryFees.reduce((sum, fee) => sum + fee.amount, 0);
+});
+
+const FeeStructure = mongoose.model('FeeStructure', feeStructureSchema);
+
+module.exports = { FeeStructure };
+

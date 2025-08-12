@@ -38,9 +38,29 @@ const teacherSchema = new mongoose.Schema({
     enum: ['Male', 'Female', 'Other'],
     required: [true, 'Gender is required']
   },
+  // Class Teacher Role (1:1 relationship)
+  isClassTeacher: {
+    type: Boolean,
+    default: false
+  },
+  assignedClass: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'SchoolClass',
+    default: null
+  },
+  
+  // Subject Teacher Role (M:M relationships)
+  isSubjectTeacher: {
+    type: Boolean,
+    default: true
+  },
   subjects: [{
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Subject'
+  }],
+  classes: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'SchoolClass'
   }],
   qualification: {
     type: String,
@@ -81,10 +101,23 @@ teacherSchema.virtual('fullName').get(function() {
   return `${this.firstName} ${this.lastName}`;
 });
 
-// Index for better query performance
-teacherSchema.index({ teacherId: 1 });
-teacherSchema.index({ email: 1 });
-teacherSchema.index({ status: 1 });
+// Validation: Ensure class teacher assignment is unique
+teacherSchema.pre('save', async function(next) {
+  if (this.isClassTeacher && this.assignedClass) {
+    const existingClassTeacher = await this.constructor.findOne({
+      assignedClass: this.assignedClass,
+      isClassTeacher: true,
+      _id: { $ne: this._id }
+    });
+    
+    if (existingClassTeacher) {
+      const error = new Error(`Class already has a class teacher: ${existingClassTeacher.fullName}`);
+      error.name = 'ClassTeacherConflict';
+      return next(error);
+    }
+  }
+  next();
+});
 
 const Teacher = mongoose.model('Teacher', teacherSchema);
 

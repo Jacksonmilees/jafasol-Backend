@@ -4,7 +4,6 @@ const SchoolClass = require('../models/SchoolClass');
 const Subject = require('../models/Subject');
 const { requirePermission } = require('../middleware/auth');
 const { createAuditLog } = require('../utils/auditLogger');
-const { Op } = require('sequelize');
 
 const router = express.Router();
 
@@ -33,33 +32,38 @@ router.get('/classes', [
     const offset = (page - 1) * limit;
     const { search, formLevel, stream } = req.query;
 
-    // Build where clause
-    const whereClause = {};
+    // Build filter query
+    const filter = {};
     if (search) {
-      whereClause[Op.or] = [
-        { name: { [Op.iLike]: `%${search}%` } },
-        { teacher: { [Op.iLike]: `%${search}%` } }
+      filter.$or = [
+        { name: { $regex: search, $options: 'i' } },
+        { teacher: { $regex: search, $options: 'i' } }
       ];
     }
-    if (formLevel) whereClause.formLevel = formLevel;
-    if (stream) whereClause.stream = stream;
+    if (formLevel) filter.formLevel = formLevel;
+    if (stream) filter.stream = stream;
 
-    const { count, rows: classes } = await SchoolClass.findAndCountAll({
-      where: whereClause,
-      limit,
-      offset,
-      order: [['formLevel', 'ASC'], ['stream', 'ASC']]
-    });
+    const [classes, count] = await Promise.all([
+      SchoolClass.find(filter)
+        .sort({ formLevel: 1, stream: 1 })
+        .skip(offset)
+        .limit(limit)
+        .lean(),
+      SchoolClass.countDocuments(filter)
+    ]);
 
     res.json({
       classes: classes.map(cls => ({
-        id: cls.id,
+        id: cls._id,
         name: cls.name,
         formLevel: cls.formLevel,
         stream: cls.stream,
         teacher: cls.teacher,
         students: cls.students,
         classTeacherId: cls.classTeacherId,
+        capacity: cls.capacity,
+        academicYear: cls.academicYear,
+        status: cls.status,
         createdAt: cls.createdAt
       })),
       pagination: {
@@ -84,7 +88,7 @@ router.get('/classes/:id', async (req, res) => {
   try {
     const { id } = req.params;
 
-    const schoolClass = await SchoolClass.findByPk(id);
+    const schoolClass = await SchoolClass.findById(id);
     if (!schoolClass) {
       return res.status(404).json({
         error: 'Class not found',
@@ -94,7 +98,7 @@ router.get('/classes/:id', async (req, res) => {
 
     res.json({
       class: {
-        id: schoolClass.id,
+        id: schoolClass._id,
         name: schoolClass.name,
         formLevel: schoolClass.formLevel,
         stream: schoolClass.stream,
@@ -137,7 +141,7 @@ router.post('/classes', [
     const { name, formLevel, stream, teacher, students = 0, classTeacherId } = req.body;
 
     // Check if class already exists
-    const existingClass = await SchoolClass.findOne({ where: { name } });
+    const existingClass = await SchoolClass.findOne({ name });
     if (existingClass) {
       return res.status(409).json({
         error: 'Class already exists',
@@ -146,7 +150,7 @@ router.post('/classes', [
     }
 
     // Create class
-    const schoolClass = await SchoolClass.create({
+    const schoolClass = new SchoolClass({
       name,
       formLevel,
       stream,
@@ -154,14 +158,15 @@ router.post('/classes', [
       students,
       classTeacherId
     });
+    await schoolClass.save();
 
     // Create audit log
-    await createAuditLog(req.user.id, 'Class Created', { type: 'Class', id: schoolClass.id, name: schoolClass.name }, `Created by ${req.user.name}`);
+    await createAuditLog(req.user.id, 'Class Created', { type: 'Class', id: schoolClass._id, name: schoolClass.name }, `Created by ${req.user.name}`);
 
     res.status(201).json({
       message: 'Class created successfully',
       class: {
-        id: schoolClass.id,
+        id: schoolClass._id,
         name: schoolClass.name,
         formLevel: schoolClass.formLevel,
         stream: schoolClass.stream,
@@ -202,7 +207,7 @@ router.put('/classes/:id', [
     const { id } = req.params;
     const updateData = req.body;
 
-    const schoolClass = await SchoolClass.findByPk(id);
+    const schoolClass = await SchoolClass.findById(id);
     if (!schoolClass) {
       return res.status(404).json({
         error: 'Class not found',
@@ -212,7 +217,7 @@ router.put('/classes/:id', [
 
     // Check if name is being changed and if it already exists
     if (updateData.name && updateData.name !== schoolClass.name) {
-      const existingClass = await SchoolClass.findOne({ where: { name: updateData.name } });
+      const existingClass = await SchoolClass.findOne({ name: updateData.name, _id: { $ne: id } });
       if (existingClass) {
         return res.status(409).json({
           error: 'Class name already exists',
@@ -221,15 +226,16 @@ router.put('/classes/:id', [
       }
     }
 
-    await schoolClass.update(updateData);
+    Object.assign(schoolClass, updateData);
+    await schoolClass.save();
 
     // Create audit log
-    await createAuditLog(req.user.id, 'Class Updated', { type: 'Class', id: schoolClass.id, name: schoolClass.name }, `Updated by ${req.user.name}`);
+    await createAuditLog(req.user.id, 'Class Updated', { type: 'Class', id: schoolClass._id, name: schoolClass.name }, `Updated by ${req.user.name}`);
 
     res.json({
       message: 'Class updated successfully',
       class: {
-        id: schoolClass.id,
+        id: schoolClass._id,
         name: schoolClass.name,
         formLevel: schoolClass.formLevel,
         stream: schoolClass.stream,
@@ -253,7 +259,7 @@ router.delete('/classes/:id', requirePermission('Academics', 'delete'), async (r
   try {
     const { id } = req.params;
 
-    const schoolClass = await SchoolClass.findByPk(id);
+    const schoolClass = await SchoolClass.findById(id);
     if (!schoolClass) {
       return res.status(404).json({
         error: 'Class not found',
@@ -262,9 +268,9 @@ router.delete('/classes/:id', requirePermission('Academics', 'delete'), async (r
     }
 
     // Create audit log before deletion
-    await createAuditLog(req.user.id, 'Class Deleted', { type: 'Class', id: schoolClass.id, name: schoolClass.name }, `Deleted by ${req.user.name}`);
+    await createAuditLog(req.user.id, 'Class Deleted', { type: 'Class', id: schoolClass._id, name: schoolClass.name }, `Deleted by ${req.user.name}`);
 
-    await schoolClass.destroy();
+    await schoolClass.deleteOne();
 
     res.json({
       message: 'Class deleted successfully'
@@ -304,29 +310,31 @@ router.get('/subjects', [
     const offset = (page - 1) * limit;
     const { search, curriculum, formLevel } = req.query;
 
-    // Build where clause
-    const whereClause = {};
+    // Build filter query
+    const filter = {};
     if (search) {
-      whereClause[Op.or] = [
-        { name: { [Op.iLike]: `%${search}%` } },
-        { code: { [Op.iLike]: `%${search}%` } }
+      filter.$or = [
+        { name: { $regex: search, $options: 'i' } },
+        { code: { $regex: search, $options: 'i' } }
       ];
     }
-    if (curriculum) whereClause.curriculum = curriculum;
+    if (curriculum) filter.curriculum = curriculum;
     if (formLevel) {
-      whereClause.formLevels = { [Op.contains]: [formLevel] };
+      filter.formLevels = formLevel;
     }
 
-    const { count, rows: subjects } = await Subject.findAndCountAll({
-      where: whereClause,
-      limit,
-      offset,
-      order: [['name', 'ASC']]
-    });
+    const [subjects, count] = await Promise.all([
+      Subject.find(filter)
+        .sort({ name: 1 })
+        .skip(offset)
+        .limit(limit)
+        .lean(),
+      Subject.countDocuments(filter)
+    ]);
 
     res.json({
       subjects: subjects.map(subject => ({
-        id: subject.id,
+        id: subject._id,
         name: subject.name,
         code: subject.code,
         curriculum: subject.curriculum,
@@ -355,7 +363,7 @@ router.get('/subjects/:id', async (req, res) => {
   try {
     const { id } = req.params;
 
-    const subject = await Subject.findByPk(id);
+    const subject = await Subject.findById(id);
     if (!subject) {
       return res.status(404).json({
         error: 'Subject not found',
@@ -365,7 +373,7 @@ router.get('/subjects/:id', async (req, res) => {
 
     res.json({
       subject: {
-        id: subject.id,
+        id: subject._id,
         name: subject.name,
         code: subject.code,
         curriculum: subject.curriculum,
@@ -405,12 +413,10 @@ router.post('/subjects', [
 
     // Check if subject already exists
     const existingSubject = await Subject.findOne({ 
-      where: { 
-        [Op.or]: [
-          { name },
-          { code }
-        ]
-      }
+      $or: [
+        { name },
+        { code }
+      ]
     });
     if (existingSubject) {
       return res.status(409).json({
@@ -420,20 +426,21 @@ router.post('/subjects', [
     }
 
     // Create subject
-    const subject = await Subject.create({
+    const subject = new Subject({
       name,
       code,
       curriculum,
       formLevels
     });
+    await subject.save();
 
     // Create audit log
-    await createAuditLog(req.user.id, 'Subject Created', { type: 'Subject', id: subject.id, name: subject.name }, `Created by ${req.user.name}`);
+    await createAuditLog(req.user.id, 'Subject Created', { type: 'Subject', id: subject._id, name: subject.name }, `Created by ${req.user.name}`);
 
     res.status(201).json({
       message: 'Subject created successfully',
       subject: {
-        id: subject.id,
+        id: subject._id,
         name: subject.name,
         code: subject.code,
         curriculum: subject.curriculum,
@@ -471,7 +478,7 @@ router.put('/subjects/:id', [
     const { id } = req.params;
     const updateData = req.body;
 
-    const subject = await Subject.findByPk(id);
+    const subject = await Subject.findById(id);
     if (!subject) {
       return res.status(404).json({
         error: 'Subject not found',
@@ -483,13 +490,11 @@ router.put('/subjects/:id', [
     if ((updateData.name && updateData.name !== subject.name) || 
         (updateData.code && updateData.code !== subject.code)) {
       const existingSubject = await Subject.findOne({ 
-        where: { 
-          [Op.or]: [
-            { name: updateData.name || subject.name },
-            { code: updateData.code || subject.code }
-          ],
-          id: { [Op.ne]: id }
-        }
+        $or: [
+          { name: updateData.name || subject.name },
+          { code: updateData.code || subject.code }
+        ],
+        _id: { $ne: id }
       });
       if (existingSubject) {
         return res.status(409).json({
@@ -499,15 +504,16 @@ router.put('/subjects/:id', [
       }
     }
 
-    await subject.update(updateData);
+    Object.assign(subject, updateData);
+    await subject.save();
 
     // Create audit log
-    await createAuditLog(req.user.id, 'Subject Updated', { type: 'Subject', id: subject.id, name: subject.name }, `Updated by ${req.user.name}`);
+    await createAuditLog(req.user.id, 'Subject Updated', { type: 'Subject', id: subject._id, name: subject.name }, `Updated by ${req.user.name}`);
 
     res.json({
       message: 'Subject updated successfully',
       subject: {
-        id: subject.id,
+        id: subject._id,
         name: subject.name,
         code: subject.code,
         curriculum: subject.curriculum,
@@ -530,7 +536,7 @@ router.delete('/subjects/:id', requirePermission('Academics', 'delete'), async (
   try {
     const { id } = req.params;
 
-    const subject = await Subject.findByPk(id);
+    const subject = await Subject.findById(id);
     if (!subject) {
       return res.status(404).json({
         error: 'Subject not found',
@@ -539,9 +545,9 @@ router.delete('/subjects/:id', requirePermission('Academics', 'delete'), async (
     }
 
     // Create audit log before deletion
-    await createAuditLog(req.user.id, 'Subject Deleted', { type: 'Subject', id: subject.id, name: subject.name }, `Deleted by ${req.user.name}`);
+    await createAuditLog(req.user.id, 'Subject Deleted', { type: 'Subject', id: subject._id, name: subject.name }, `Deleted by ${req.user.name}`);
 
-    await subject.destroy();
+    await subject.deleteOne();
 
     res.json({
       message: 'Subject deleted successfully'

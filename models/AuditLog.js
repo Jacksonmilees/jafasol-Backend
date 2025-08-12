@@ -36,12 +36,6 @@ const auditLogSchema = new mongoose.Schema({
   timestamps: true
 });
 
-// Index for better query performance
-auditLogSchema.index({ userId: 1 });
-auditLogSchema.index({ action: 1 });
-auditLogSchema.index({ resource: 1 });
-auditLogSchema.index({ timestamp: -1 });
-
 const AuditLog = mongoose.model('AuditLog', auditLogSchema);
 
 module.exports = AuditLog; 

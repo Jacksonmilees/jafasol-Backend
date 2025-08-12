@@ -26,10 +26,6 @@ const roleSchema = new mongoose.Schema({
   timestamps: true
 });
 
-// Index for better query performance
-roleSchema.index({ name: 1 });
-roleSchema.index({ isActive: 1 });
-
 const Role = mongoose.model('Role', roleSchema);
 
 module.exports = Role; 

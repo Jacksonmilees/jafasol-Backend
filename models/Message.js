@@ -1,72 +1,103 @@
-const { DataTypes } = require('sequelize');
-const { sequelize } = require('../config/database');
+const mongoose = require('mongoose');
 
-const Message = sequelize.define('Message', {
-  id: {
-    type: DataTypes.INTEGER,
-    primaryKey: true,
-    autoIncrement: true
-  },
+const messageSchema = new mongoose.Schema({
   senderId: {
-    type: DataTypes.INTEGER,
-    allowNull: false,
-    references: {
-      model: 'users',
-      key: 'id'
-    }
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: [true, 'Sender ID is required']
   },
   recipientId: {
-    type: DataTypes.INTEGER,
-    allowNull: false,
-    references: {
-      model: 'users',
-      key: 'id'
-    }
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: [true, 'Recipient ID is required']
   },
   subject: {
-    type: DataTypes.STRING,
-    allowNull: false
+    type: String,
+    required: [true, 'Subject is required'],
+    trim: true,
+    maxlength: [200, 'Subject cannot exceed 200 characters']
   },
   content: {
-    type: DataTypes.TEXT,
-    allowNull: false
+    type: String,
+    required: [true, 'Message content is required'],
+    trim: true
   },
-  type: {
-    type: DataTypes.ENUM('email', 'sms', 'notification', 'announcement'),
-    allowNull: false,
-    defaultValue: 'email'
+  messageType: {
+    type: String,
+    enum: ['Internal', 'External', 'Announcement', 'Notification'],
+    default: 'Internal'
+  },
+  priority: {
+    type: String,
+    enum: ['Low', 'Normal', 'High', 'Urgent'],
+    default: 'Normal'
   },
   status: {
-    type: DataTypes.ENUM('sent', 'delivered', 'read', 'failed'),
-    allowNull: false,
-    defaultValue: 'sent'
+    type: String,
+    enum: ['Draft', 'Sent', 'Delivered', 'Read', 'Archived'],
+    default: 'Draft'
   },
   readAt: {
-    type: DataTypes.DATE,
-    allowNull: true
+    type: Date,
+    default: null
   },
   attachments: {
-    type: DataTypes.JSONB,
-    allowNull: true
+    type: [{
+      filename: String,
+      originalName: String,
+      mimeType: String,
+      size: Number,
+      path: String
+    }],
+    default: []
   },
-  isActive: {
-    type: DataTypes.BOOLEAN,
-    defaultValue: true
+  isUrgent: {
+    type: Boolean,
+    default: false
+  },
+  expiresAt: {
+    type: Date,
+    default: null
+  },
+  tags: {
+    type: [String],
+    default: []
   }
 }, {
-  tableName: 'messages',
   timestamps: true,
-  indexes: [
-    {
-      fields: ['senderId', 'createdAt']
-    },
-    {
-      fields: ['recipientId', 'status']
-    },
-    {
-      fields: ['type']
-    }
-  ]
+  toJSON: { virtuals: true },
+  toObject: { virtuals: true }
 });
+
+// Indexes for better query performance
+messageSchema.index({ senderId: 1, createdAt: -1 });
+messageSchema.index({ recipientId: 1, createdAt: -1 });
+messageSchema.index({ status: 1 });
+messageSchema.index({ messageType: 1 });
+messageSchema.index({ priority: 1 });
+messageSchema.index({ isUrgent: 1 });
+
+// Virtual for message preview
+messageSchema.virtual('preview').get(function() {
+  return this.content.length > 100 ? this.content.substring(0, 100) + '...' : this.content;
+});
+
+// Virtual for isRead
+messageSchema.virtual('isRead').get(function() {
+  return this.readAt !== null;
+});
+
+// Virtual for timeAgo
+messageSchema.virtual('timeAgo').get(function() {
+  const now = new Date();
+  const diffInSeconds = Math.floor((now - this.createdAt) / 1000);
+  
+  if (diffInSeconds < 60) return 'Just now';
+  if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)}m ago`;
+  if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)}h ago`;
+  return `${Math.floor(diffInSeconds / 86400)}d ago`;
+});
+
+const Message = mongoose.model('Message', messageSchema);
 
 module.exports = { Message }; 

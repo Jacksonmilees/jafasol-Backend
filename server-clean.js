@@ -17,8 +17,8 @@ const handleTenant = (req, res, next) => {
   
   console.log(`🔍 Tenant middleware - Host: ${host}, Subdomain: ${subdomain}`);
   
-  // Skip tenant handling for main admin domain
-  if (host === 'jafasol.com' || host === 'localhost:5000' || host === 'localhost:3000' || host === 'www.jafasol.com') {
+  // Skip tenant handling for main admin domain AND admin subdomain
+  if (host === 'jafasol.com' || host === 'localhost:5000' || host === 'localhost:3000' || host === 'www.jafasol.com' || host === 'admin.jafasol.com') {
     req.tenant = null;
     req.isMainAdmin = true;
     console.log('✅ Main admin domain detected');
@@ -33,7 +33,7 @@ const handleTenant = (req, res, next) => {
     
     // Connect to school-specific database
     const schoolDbName = `school_${subdomain}`;
-    const mongoURI = process.env.MONGODB_URI || 'mongodb+srv://wdionet:3r14F65gMv@cluster0.lvltkqp.mongodb.net/jafasol?retryWrites=true&w=majority&appName=Cluster0';
+    const mongoURI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/jafasol';
     
     // Fix the database name replacement
     let schoolDbURI;
@@ -1943,6 +1943,224 @@ app.delete('/api/admin/schools/:schoolId', authenticateToken, requireAdmin, asyn
   }
 });
 
+// ==================== ACADEMICS ROUTES ====================
+// Load Subject and SchoolClass models
+const Subject = require('./models/Subject');
+const SchoolClass = require('./models/SchoolClass');
+
+// Get all subjects
+app.get('/api/academics/subjects', async (req, res) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20;
+    const offset = (page - 1) * limit;
+    const { search, curriculum, formLevel } = req.query;
+
+    // Build filter query
+    const filter = {};
+    if (search) {
+      filter.$or = [
+        { name: { $regex: search, $options: 'i' } },
+        { code: { $regex: search, $options: 'i' } }
+      ];
+    }
+    if (curriculum) filter.curriculum = curriculum;
+    if (formLevel) {
+      filter.formLevels = formLevel;
+    }
+
+    const [subjects, count] = await Promise.all([
+      Subject.find(filter)
+        .sort({ name: 1 })
+        .skip(offset)
+        .limit(limit)
+        .lean(),
+      Subject.countDocuments(filter)
+    ]);
+
+    res.json({
+      subjects: subjects.map(subject => ({
+        id: subject._id,
+        name: subject.name,
+        code: subject.code,
+        curriculum: subject.curriculum,
+        formLevels: subject.formLevels,
+        status: subject.status,
+        createdAt: subject.createdAt
+      })),
+      pagination: {
+        page,
+        limit,
+        total: count,
+        totalPages: Math.ceil(count / limit)
+      }
+    });
+
+  } catch (error) {
+    console.error('Get subjects error:', error);
+    res.status(500).json({
+      error: 'Failed to fetch subjects',
+      message: 'An error occurred while fetching subjects'
+    });
+  }
+});
+
+// Create new subject
+app.post('/api/academics/subjects', async (req, res) => {
+  try {
+    const { name, code, curriculum, formLevels } = req.body;
+
+    // Check if subject already exists
+    const existingSubject = await Subject.findOne({ 
+      $or: [
+        { name },
+        { code }
+      ]
+    });
+    if (existingSubject) {
+      return res.status(409).json({
+        error: 'Subject already exists',
+        message: 'A subject with this name or code already exists'
+      });
+    }
+
+    // Create subject
+    const subject = new Subject({
+      name,
+      code,
+      curriculum,
+      formLevels
+    });
+    await subject.save();
+
+    res.status(201).json({
+      message: 'Subject created successfully',
+      subject: {
+        id: subject._id,
+        name: subject.name,
+        code: subject.code,
+        curriculum: subject.curriculum,
+        formLevels: subject.formLevels,
+        createdAt: subject.createdAt
+      }
+    });
+
+  } catch (error) {
+    console.error('Create subject error:', error);
+    res.status(500).json({
+      error: 'Failed to create subject',
+      message: 'An error occurred while creating subject'
+    });
+  }
+});
+
+// Get all classes
+app.get('/api/academics/classes', async (req, res) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20;
+    const offset = (page - 1) * limit;
+    const { search, formLevel, stream } = req.query;
+
+    // Build filter query
+    const filter = {};
+    if (search) {
+      filter.$or = [
+        { name: { $regex: search, $options: 'i' } },
+        { teacher: { $regex: search, $options: 'i' } }
+      ];
+    }
+    if (formLevel) filter.formLevel = formLevel;
+    if (stream) filter.stream = stream;
+
+    const [classes, count] = await Promise.all([
+      SchoolClass.find(filter)
+        .sort({ formLevel: 1, stream: 1 })
+        .skip(offset)
+        .limit(limit)
+        .lean(),
+      SchoolClass.countDocuments(filter)
+    ]);
+
+    res.json({
+      classes: classes.map(cls => ({
+        id: cls._id,
+        name: cls.name,
+        formLevel: cls.formLevel,
+        stream: cls.stream,
+        teacher: cls.teacher,
+        students: cls.students,
+        classTeacherId: cls.classTeacherId,
+        capacity: cls.capacity,
+        academicYear: cls.academicYear,
+        status: cls.status,
+        createdAt: cls.createdAt
+      })),
+      pagination: {
+        page,
+        limit,
+        total: count,
+        totalPages: Math.ceil(count / limit)
+      }
+    });
+
+  } catch (error) {
+    console.error('Get classes error:', error);
+    res.status(500).json({
+      error: 'Failed to fetch classes',
+      message: 'An error occurred while fetching classes'
+    });
+  }
+});
+
+// Create new class
+app.post('/api/academics/classes', async (req, res) => {
+  try {
+    const { name, formLevel, stream, teacher, capacity } = req.body;
+
+    // Check if class already exists
+    const existingClass = await SchoolClass.findOne({ name });
+    if (existingClass) {
+      return res.status(409).json({
+        error: 'Class already exists',
+        message: 'A class with this name already exists'
+      });
+    }
+
+    // Create class
+    const schoolClass = new SchoolClass({
+      name,
+      formLevel,
+      stream,
+      teacher: teacher || null,
+      capacity: capacity || 50,
+      students: 0
+    });
+    await schoolClass.save();
+
+    res.status(201).json({
+      message: 'Class created successfully',
+      class: {
+        id: schoolClass._id,
+        name: schoolClass.name,
+        formLevel: schoolClass.formLevel,
+        stream: schoolClass.stream,
+        teacher: schoolClass.teacher,
+        students: schoolClass.students,
+        capacity: schoolClass.capacity,
+        createdAt: schoolClass.createdAt
+      }
+    });
+
+  } catch (error) {
+    console.error('Create class error:', error);
+    res.status(500).json({
+      error: 'Failed to create class',
+      message: 'An error occurred while creating class'
+    });
+  }
+});
+
 // 404 handler for non-API routes - must be at the end
 app.use((req, res) => {
   if (!req.path.startsWith('/api/')) {
@@ -1960,7 +2178,7 @@ app.use((req, res) => {
 // Start server
 const startServer = async () => {
   try {
-    const mongoURI = process.env.MONGODB_URI || 'mongodb+srv://wdionet:3r14F65gMv@cluster0.lvltkqp.mongodb.net/jafasol?retryWrites=true&w=majority&appName=Cluster0';
+    const mongoURI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/jafasol';
     
     await mongoose.connect(mongoURI, {
       useNewUrlParser: true,

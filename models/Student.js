@@ -91,12 +91,6 @@ studentSchema.virtual('class', {
   justOne: true
 });
 
-// Index for better query performance
-studentSchema.index({ studentId: 1 });
-studentSchema.index({ email: 1 });
-studentSchema.index({ classId: 1 });
-studentSchema.index({ status: 1 });
-
 const Student = mongoose.model('Student', studentSchema);
 
 module.exports = Student; 

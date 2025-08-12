@@ -5,32 +5,60 @@ const schoolClassSchema = new mongoose.Schema({
     type: String,
     required: [true, 'Class name is required'],
     unique: true,
-    trim: true
+    trim: true,
+    maxLength: [50, 'Class name cannot exceed 50 characters']
   },
-  grade: {
+  formLevel: {
     type: String,
-    required: [true, 'Grade is required'],
-    trim: true
+    required: [true, 'Form level is required'],
+    trim: true,
+    maxLength: [20, 'Form level cannot exceed 20 characters']
   },
-  section: {
+  stream: {
     type: String,
-    required: [true, 'Section is required'],
-    trim: true
+    required: [true, 'Stream is required'],
+    trim: true,
+    maxLength: [10, 'Stream cannot exceed 10 characters']
+  },
+  teacher: {
+    type: String,
+    required: false, // Make teacher optional initially
+    trim: true,
+    maxLength: [100, 'Teacher name cannot exceed 100 characters'],
+    default: null
+  },
+  classTeacherId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Teacher',
+    required: false, // Make teacher assignment optional
+    default: null
+  },
+  students: {
+    type: Number,
+    required: true,
+    default: 0,
+    min: [0, 'Number of students cannot be negative'],
+    validate: {
+      validator: Number.isInteger,
+      message: 'Number of students must be an integer'
+    }
   },
   capacity: {
     type: Number,
-    required: [true, 'Capacity is required'],
-    min: [1, 'Capacity must be at least 1']
-  },
-  teacherId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Teacher',
-    default: null
+    required: true,
+    default: 50,
+    min: [1, 'Capacity must be at least 1'],
+    validate: {
+      validator: Number.isInteger,
+      message: 'Capacity must be an integer'
+    }
   },
   academicYear: {
     type: String,
-    required: [true, 'Academic year is required'],
-    trim: true
+    required: true,
+    default: '2024',
+    trim: true,
+    maxLength: [20, 'Academic year cannot exceed 20 characters']
   },
   status: {
     type: String,
@@ -47,27 +75,21 @@ const schoolClassSchema = new mongoose.Schema({
   toObject: { virtuals: true }
 });
 
-// Virtual for class teacher
-schoolClassSchema.virtual('teacher', {
+// Virtual for class teacher details
+schoolClassSchema.virtual('teacherDetails', {
   ref: 'Teacher',
-  localField: 'teacherId',
+  localField: 'classTeacherId',
   foreignField: '_id',
   justOne: true
 });
 
-// Virtual for students count
+// Virtual for students count (when populated)
 schoolClassSchema.virtual('studentsCount', {
   ref: 'Student',
   localField: '_id',
   foreignField: 'classId',
   count: true
 });
-
-// Index for better query performance
-schoolClassSchema.index({ name: 1 });
-schoolClassSchema.index({ grade: 1 });
-schoolClassSchema.index({ teacherId: 1 });
-schoolClassSchema.index({ status: 1 });
 
 const SchoolClass = mongoose.model('SchoolClass', schoolClassSchema);
 

@@ -1,92 +1,95 @@
-const { DataTypes } = require('sequelize');
-const { sequelize } = require('../config/database');
+const mongoose = require('mongoose');
 
-const BookIssue = sequelize.define('BookIssue', {
-  id: {
-    type: DataTypes.INTEGER,
-    primaryKey: true,
-    autoIncrement: true
-  },
+const bookIssueSchema = new mongoose.Schema({
   bookId: {
-    type: DataTypes.INTEGER,
-    allowNull: false,
-    references: {
-      model: 'books',
-      key: 'id'
-    }
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Book',
+    required: [true, 'Book ID is required']
   },
   studentId: {
-    type: DataTypes.INTEGER,
-    allowNull: false,
-    references: {
-      model: 'students',
-      key: 'id'
-    }
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Student',
+    required: [true, 'Student ID is required']
   },
   issuedBy: {
-    type: DataTypes.INTEGER,
-    allowNull: false,
-    references: {
-      model: 'users',
-      key: 'id'
-    }
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: [true, 'Issued by user is required']
   },
-  issuedAt: {
-    type: DataTypes.DATE,
-    allowNull: false,
-    defaultValue: DataTypes.NOW
+  issueDate: {
+    type: Date,
+    required: [true, 'Issue date is required'],
+    default: Date.now
   },
   dueDate: {
-    type: DataTypes.DATE,
-    allowNull: false
+    type: Date,
+    required: [true, 'Due date is required']
   },
-  returnedAt: {
-    type: DataTypes.DATE,
-    allowNull: true
-  },
-  returnedTo: {
-    type: DataTypes.INTEGER,
-    allowNull: true,
-    references: {
-      model: 'users',
-      key: 'id'
-    }
+  returnDate: {
+    type: Date,
+    default: null
   },
   status: {
-    type: DataTypes.ENUM('borrowed', 'returned', 'overdue', 'lost'),
-    allowNull: false,
-    defaultValue: 'borrowed'
+    type: String,
+    enum: ['Issued', 'Returned', 'Overdue', 'Lost'],
+    default: 'Issued'
   },
   fine: {
-    type: DataTypes.DECIMAL(10, 2),
-    allowNull: true,
-    defaultValue: 0
+    type: Number,
+    default: 0,
+    min: [0, 'Fine cannot be negative']
   },
   notes: {
-    type: DataTypes.TEXT,
-    allowNull: true
+    type: String,
+    trim: true
   },
   isActive: {
-    type: DataTypes.BOOLEAN,
-    defaultValue: true
+    type: Boolean,
+    default: true
   }
 }, {
-  tableName: 'book_issues',
   timestamps: true,
-  indexes: [
-    {
-      fields: ['bookId', 'studentId', 'status']
-    },
-    {
-      fields: ['studentId']
-    },
-    {
-      fields: ['status']
-    },
-    {
-      fields: ['dueDate']
-    }
-  ]
+  toJSON: { virtuals: true },
+  toObject: { virtuals: true }
 });
 
-module.exports = { BookIssue }; 
+// Indexes for better query performance
+bookIssueSchema.index({ bookId: 1 });
+bookIssueSchema.index({ studentId: 1 });
+bookIssueSchema.index({ status: 1 });
+bookIssueSchema.index({ dueDate: 1 });
+bookIssueSchema.index({ isActive: 1 });
+
+// Virtual for days overdue
+bookIssueSchema.virtual('daysOverdue').get(function() {
+  if (this.status === 'Returned' || !this.dueDate) return 0;
+  
+  const now = new Date();
+  const due = new Date(this.dueDate);
+  const diffTime = now - due;
+  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+  
+  return diffDays > 0 ? diffDays : 0;
+});
+
+// Virtual for is overdue
+bookIssueSchema.virtual('isOverdue').get(function() {
+  return this.daysOverdue > 0 && this.status === 'Issued';
+});
+
+// Virtual for days remaining
+bookIssueSchema.virtual('daysRemaining').get(function() {
+  if (this.status === 'Returned' || !this.dueDate) return null;
+  
+  const now = new Date();
+  const due = new Date(this.dueDate);
+  const diffTime = due - now;
+  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+  
+  return diffDays > 0 ? diffDays : 0;
+});
+
+const BookIssue = mongoose.model('BookIssue', bookIssueSchema);
+
+module.exports = { BookIssue };
+

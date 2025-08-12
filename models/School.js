@@ -111,12 +111,7 @@ const schoolSchema = new mongoose.Schema({
   timestamps: true
 });
 
-// Index for efficient queries
-schoolSchema.index({ email: 1 });
-schoolSchema.index({ subdomain: 1 });
-schoolSchema.index({ status: 1 });
-schoolSchema.index({ plan: 1 });
-schoolSchema.index({ createdAt: -1 });
+// Index for efficient queries (email and subdomain are already unique in schema)
 
 // Virtual for full domain
 schoolSchema.virtual('fullDomain').get(function() {
@@ -146,3 +141,7 @@ schoolSchema.pre('save', async function(next) {
   }
   next();
 });
+
+const School = mongoose.model('School', schoolSchema);
+
+module.exports = School;

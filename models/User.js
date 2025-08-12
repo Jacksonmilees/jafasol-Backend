@@ -122,11 +122,6 @@ userSchema.statics.findByEmail = function(email) {
   return this.findOne({ email: email.toLowerCase() });
 };
 
-// Index for better query performance
-userSchema.index({ email: 1 });
-userSchema.index({ roleId: 1 });
-userSchema.index({ status: 1 });
-
 // Multi-tenant model factory
 const createUserModel = (connection) => {
   return connection.model('User', userSchema);

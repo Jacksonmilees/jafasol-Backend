@@ -1,70 +1,100 @@
-const { DataTypes } = require('sequelize');
-const { sequelize } = require('../config/database');
+const mongoose = require('mongoose');
 
-const Exam = sequelize.define('Exam', {
-  id: {
-    type: DataTypes.UUID,
-    defaultValue: DataTypes.UUIDV4,
-    primaryKey: true
-  },
+const examSchema = new mongoose.Schema({
   name: {
-    type: DataTypes.STRING,
-    allowNull: false
+    type: String,
+    required: [true, 'Exam name is required'],
+    trim: true
   },
   type: {
-    type: DataTypes.ENUM('CAT', 'Mid-Term', 'End-Term', 'Mock'),
-    allowNull: false
+    type: String,
+    enum: ['CAT', 'Mid-Term', 'End-Term', 'Mock'],
+    required: [true, 'Exam type is required']
   },
   term: {
-    type: DataTypes.STRING,
-    allowNull: false
+    type: String,
+    required: [true, 'Term is required']
   },
   startDate: {
-    type: DataTypes.DATEONLY,
-    allowNull: false
+    type: Date,
+    required: [true, 'Start date is required']
   },
   endDate: {
-    type: DataTypes.DATEONLY,
-    allowNull: true
+    type: Date,
+    required: false
   },
   status: {
-    type: DataTypes.ENUM('Upcoming', 'Ongoing', 'Completed'),
-    defaultValue: 'Upcoming'
+    type: String,
+    enum: ['Upcoming', 'Ongoing', 'Completed'],
+    default: 'Upcoming'
   },
   subjects: {
-    type: DataTypes.JSONB,
-    allowNull: false,
-    defaultValue: []
+    type: [{
+      subjectId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Subject',
+        required: true
+      },
+      subjectName: String,
+      maxMarks: Number,
+      passMarks: Number
+    }],
+    default: []
   },
   marksLocked: {
-    type: DataTypes.BOOLEAN,
-    defaultValue: false
+    type: Boolean,
+    default: false
   },
   description: {
-    type: DataTypes.TEXT,
-    allowNull: true
+    type: String,
+    trim: true
   },
   instructions: {
-    type: DataTypes.TEXT,
-    allowNull: true
+    type: String,
+    trim: true
   },
   isActive: {
-    type: DataTypes.BOOLEAN,
-    defaultValue: true
+    type: Boolean,
+    default: true
+  },
+  academicYear: {
+    type: String,
+    required: [true, 'Academic year is required']
+  },
+  createdBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true
   }
 }, {
-  tableName: 'exams',
-  indexes: [
-    {
-      fields: ['type']
-    },
-    {
-      fields: ['status']
-    },
-    {
-      fields: ['startDate']
-    }
-  ]
+  timestamps: true,
+  toJSON: { virtuals: true },
+  toObject: { virtuals: true }
 });
 
-module.exports = Exam; 
+// Indexes for better query performance
+examSchema.index({ type: 1 });
+examSchema.index({ status: 1 });
+examSchema.index({ startDate: 1 });
+examSchema.index({ academicYear: 1, term: 1 });
+
+// Virtual for exam duration
+examSchema.virtual('duration').get(function() {
+  if (this.startDate && this.endDate) {
+    return Math.ceil((this.endDate - this.startDate) / (1000 * 60 * 60 * 24));
+  }
+  return null;
+});
+
+// Virtual for exam status based on dates
+examSchema.virtual('computedStatus').get(function() {
+  const now = new Date();
+  if (this.startDate && this.endDate) {
+    if (now < this.startDate) return 'Upcoming';
+    if (now >= this.startDate && now <= this.endDate) return 'Ongoing';
+    return 'Completed';
+  }
+  return this.status;
+});
+
+module.exports = mongoose.model('Exam', examSchema); 
